@@ -1,0 +1,21 @@
+[project]
+name = "atv-final"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Paulo Lebens", email = "paulohlebens@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "mss>=10.2.0",
+    "pillow>=13.0.0",
+    "pyside6>=6.12.0",
+]
+
+[project.scripts]
+atv-final = "atv_final:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
