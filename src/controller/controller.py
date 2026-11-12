@@ -1,27 +1,53 @@
-"""Controlador (cliente TCP). Etapa 1: envia um ECHO e imprime a resposta."""
+"""CLI provisória do controlador (a interface PySide6 vem na Etapa 8).
+
+Cada linha digitada vira um ECHO; as respostas aparecem quando chegam.
+"""
 
 import json
-import socket
+import queue
+import threading
 
+from controller.connection import EVENTO_DESCONECTADO, Connection
 from shared.log import setup_logging
-from shared.protocol import DEFAULT_PORT, Acao, make_command
-from shared.receiver import recv_msg
-from shared.sender import send_msg
-
-log = setup_logging("controlador", "logs/controlador.log")
+from shared.protocol import DEFAULT_PORT, Acao
 
 
 def run_controller(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
-    log.info("conectando a %s:%d", host, port)
+    log = setup_logging("controlador", "logs/controlador.log")
+    conn = Connection(host, port, log)
     try:
-        with socket.create_connection((host, port), timeout=5) as sock:
-            cmd = make_command(Acao.ECHO, {"texto": "olá do controlador"})
-            send_msg(sock, cmd)
-            log.info("enviado %s (id=%s)", cmd["acao"], cmd["id"])
-            resp = recv_msg(sock)
-            print(json.dumps(resp, indent=2, ensure_ascii=False))
-    except ConnectionRefusedError:
-        log.error("agente indisponível em %s:%d — ele está rodando?", host, port)
+        conn.connect()
+    except OSError as exc:
+        log.error("não foi possível conectar a %s:%d (%s) — o agente está rodando?", host, port, exc)
+        return
+
+    done = threading.Event()
+
+    def printer() -> None:
+        while not done.is_set():
+            try:
+                msg = conn.incoming.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            print(json.dumps(msg, indent=2, ensure_ascii=False))
+            if msg["acao"] == EVENTO_DESCONECTADO:
+                print("(conexão encerrada — pressione Enter para sair)")
+                done.set()
+
+    threading.Thread(target=printer, daemon=True).start()
+
+    print("Digite uma linha para enviar ECHO; 'sair' encerra.")
+    try:
+        while not done.is_set():
+            line = input("> ")
+            if line.strip() == "sair" or done.is_set():
+                break
+            conn.send(Acao.ECHO, {"texto": line})
+    except (EOFError, KeyboardInterrupt, ConnectionError):
+        pass
+    finally:
+        done.set()
+        conn.close()
 
 
 if __name__ == "__main__":

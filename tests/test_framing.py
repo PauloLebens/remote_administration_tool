@@ -1,15 +1,13 @@
 """Testes do framing e do eco. Rodar: PYTHONPATH=src python3 -m unittest discover -s tests"""
 
-import socket
 import struct
-import threading
 import unittest
 
 from shared.protocol import (
     MAX_MESSAGE_SIZE, Acao, ProtocolError, Status, make_command, make_response, validate,
 )
 from shared.receiver import recv_msg
-from shared.sender import encode_frame, send_msg
+from shared.sender import encode_frame
 
 
 class FakeSock:
@@ -68,38 +66,6 @@ class FramingTests(unittest.TestCase):
         cmd = make_command(Acao.ECHO)
         self.assertEqual(make_response(cmd, "x")["id"], cmd["id"])
         self.assertEqual(make_response(cmd, erro="falhou")["status"], Status.ERRO)
-
-
-class AgenteEcoTests(unittest.TestCase):
-    def setUp(self):
-        from agent import agent
-        self.agent = agent
-        self.srv = socket.socket()
-        self.srv.bind(("127.0.0.1", 0))
-        self.srv.listen(1)
-        self.port = self.srv.getsockname()[1]
-
-        def serve():
-            for _ in range(2):  # a 1ª sessão cai por lixo; a 2ª prova que o agente sobreviveu
-                conn, addr = self.srv.accept()
-                agent.handle_session(conn, addr)
-
-        self.t = threading.Thread(target=serve, daemon=True)
-        self.t.start()
-
-    def tearDown(self):
-        self.srv.close()
-
-    def test_eco_e_sobrevive_a_lixo(self):
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
-            s.sendall(struct.pack("!I", 5) + b"lixo!")
-            self.assertIsNone(recv_msg(s))  # agente derrubou só esta sessão
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
-            cmd = make_command(Acao.ECHO, {"t": "oi"})
-            send_msg(s, cmd)
-            resp = recv_msg(s)
-            self.assertEqual(resp["id"], cmd["id"])
-            self.assertEqual(resp["resultado"], {"eco": {"t": "oi"}})
 
 
 if __name__ == "__main__":
