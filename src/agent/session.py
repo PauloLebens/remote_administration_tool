@@ -6,7 +6,10 @@ import logging
 import socket
 from typing import Any, Callable
 
-from shared.protocol import Tipo, ProtocolError, make_response, validate
+from shared.auth import make_nonce, verify_proof
+from shared.protocol import (
+    Acao, ProtocolError, Tipo, make_event, make_response, validate,
+)
 from shared.receiver import recv_msg
 from shared.sender import send_msg
 
@@ -22,17 +25,23 @@ class Session:
         addr: tuple,
         handlers: dict[str, Handler],
         log: logging.Logger,
+        secret: str,
+        auth_timeout: float = 10.0,
     ) -> None:
         self.conn = conn
         self.origem = f"{addr[0]}:{addr[1]}"
         self.handlers = handlers
         self.log = log
+        self._secret = secret
+        self._auth_timeout = auth_timeout
         self._closing = False
 
     def run(self) -> None:
-        """Atende o controlador até ele sair, cair ou a sessão ser fechada."""
+        """Autentica o controlador e o atende até ele sair, cair ou a sessão ser fechada."""
         self.log.info("conexão aceita de %s", self.origem)
         try:
+            if not self._handshake():
+                return
             while True:
                 msg = recv_msg(self.conn)
                 if msg is None:  # controlador encerrou de forma limpa
@@ -59,6 +68,37 @@ class Session:
                 op()
             except OSError:
                 pass
+
+    def _handshake(self) -> bool:
+        """Desafio-resposta. Nenhuma outra ação é aceita antes dele, e quem não
+        responder a tempo é derrubado (senão uma conexão muda ocuparia o único
+        lugar do agente)."""
+        nonce = make_nonce()
+        self.conn.settimeout(self._auth_timeout)
+        try:
+            send_msg(self.conn, make_event(Acao.DESAFIO, {"nonce": nonce}))
+            msg = recv_msg(self.conn)
+            if msg is None:
+                self.log.warning("%s desconectou sem se autenticar", self.origem)
+                return False
+            validate(msg)
+            if msg["tipo"] != Tipo.COMANDO or msg["acao"] != Acao.AUTH:
+                self.log.warning(
+                    "%s enviou %s antes de autenticar; conexão recusada", self.origem, msg["acao"]
+                )
+                send_msg(self.conn, make_response(msg, erro="autenticação necessária"))
+                return False
+            if not verify_proof(self._secret, nonce, (msg.get("args") or {}).get("prova")):
+                self.log.warning("falha de autenticação de %s; conexão recusada", self.origem)
+                send_msg(self.conn, make_response(msg, erro="credenciais inválidas"))
+                return False
+            send_msg(self.conn, make_response(msg, {"autenticado": True}))
+        except socket.timeout:
+            self.log.warning("%s não concluiu a autenticação a tempo", self.origem)
+            return False
+        self.conn.settimeout(None)
+        self.log.info("%s autenticado", self.origem)
+        return True
 
     def _dispatch(self, msg: dict[str, Any]) -> None:
         self.log.info("%s -> %s (id=%s)", self.origem, msg["acao"], msg["id"])

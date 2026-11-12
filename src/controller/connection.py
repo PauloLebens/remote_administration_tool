@@ -15,7 +15,10 @@ import socket
 import threading
 from typing import Any
 
-from shared.protocol import DEFAULT_PORT, ProtocolError, make_command, make_event
+from shared.auth import compute_proof
+from shared.protocol import (
+    DEFAULT_PORT, Acao, ProtocolError, Status, Tipo, make_command, make_event,
+)
 from shared.receiver import recv_msg
 from shared.sender import send_msg
 
@@ -23,13 +26,20 @@ from shared.sender import send_msg
 EVENTO_DESCONECTADO = "DESCONECTADO"
 
 
+class AuthError(ConnectionError):
+    """O agente recusou as credenciais ou não seguiu o handshake."""
+
+
 class Connection:
     def __init__(
         self,
         host: str,
         port: int = DEFAULT_PORT,
+        *,
+        secret: str,
         log: logging.Logger | None = None,
     ) -> None:
+        self._secret = secret
         self.host = host
         self.port = port
         self.log = log or logging.getLogger("controlador")
@@ -46,9 +56,14 @@ class Connection:
         return self._sock is not None and not self._closed.is_set()
 
     def connect(self, timeout: float = 5.0) -> None:
-        """Conecta (levanta OSError se falhar) e inicia as threads."""
+        """Conecta e autentica (levanta OSError ou AuthError se falhar) e inicia as threads."""
         self.log.info("conectando a %s:%d", self.host, self.port)
         sock = socket.create_connection((self.host, self.port), timeout=timeout)
+        try:
+            self._authenticate(sock)
+        except BaseException:
+            sock.close()
+            raise
         sock.settimeout(None)
         self._sock = sock
         self._threads = [
@@ -58,6 +73,28 @@ class Connection:
         for t in self._threads:
             t.start()
         self.log.info("conectado a %s:%d", self.host, self.port)
+
+    def _authenticate(self, sock: socket.socket) -> None:
+        """Handshake síncrono, antes de existirem as threads (ver shared/auth.py)."""
+        try:
+            desafio = recv_msg(sock)
+            if (
+                not desafio
+                or desafio.get("tipo") != Tipo.EVENTO
+                or desafio.get("acao") != Acao.DESAFIO
+                or not isinstance((desafio.get("args") or {}).get("nonce"), str)
+            ):
+                raise AuthError("o agente não iniciou o handshake esperado")
+            prova = compute_proof(self._secret, desafio["args"]["nonce"])
+            send_msg(sock, make_command(Acao.AUTH, {"prova": prova}))
+            resp = recv_msg(sock)
+        except socket.timeout as exc:
+            raise AuthError("tempo esgotado no handshake") from exc
+        if resp is None or resp.get("status") != Status.OK:
+            motivo = (resp or {}).get("erro", "conexão encerrada pelo agente")
+            self.log.error("autenticação recusada: %s", motivo)
+            raise AuthError(f"autenticação recusada: {motivo}")
+        self.log.info("autenticado em %s:%d", self.host, self.port)
 
     def send(self, acao: str, args: dict[str, Any] | None = None) -> str:
         """Enfileira um comando e devolve seu id (a resposta virá com o mesmo id)."""

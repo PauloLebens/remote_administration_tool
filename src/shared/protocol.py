@@ -32,6 +32,7 @@ class Tipo:
 
 
 class Acao:
+    DESAFIO = "DESAFIO"  # evento do agente com o nonce, logo após a conexão
     AUTH = "AUTH"
     ECHO = "ECHO"
     EXEC = "EXEC"
@@ -49,7 +50,7 @@ class Acao:
     BYE = "BYE"
 
     TODAS = frozenset(
-        {AUTH, ECHO, EXEC, SYSINFO, LS, GET, PUT, MOUSE_MOVE, MOUSE_CLICK,
+        {DESAFIO, AUTH, ECHO, EXEC, SYSINFO, LS, GET, PUT, MOUSE_MOVE, MOUSE_CLICK,
          MOUSE_SCROLL, KEY, SCREENSHOT, PS, KILL, BYE}
     )
 

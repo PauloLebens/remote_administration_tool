@@ -22,9 +22,16 @@ class AgentServer:
         self,
         host: str = "0.0.0.0",
         port: int = DEFAULT_PORT,
+        *,
+        secret: str,
         handlers: dict[str, Handler] | None = None,
         log: logging.Logger | None = None,
+        auth_timeout: float = 10.0,
     ) -> None:
+        if not secret:  # sem autenticação o agente não sobe
+            raise ValueError("o agente exige um segredo compartilhado")
+        self._secret = secret
+        self.auth_timeout = auth_timeout
         self.host = host
         self.port = port
         self.handlers = handlers if handlers is not None else default_handlers()
@@ -59,7 +66,9 @@ class AgentServer:
                 except OSError:
                     break
                 conn.settimeout(None)
-                self._session = Session(conn, addr, self.handlers, self.log)
+                self._session = Session(
+                    conn, addr, self.handlers, self.log, self._secret, self.auth_timeout
+                )
                 try:
                     self._session.run()
                 finally:
