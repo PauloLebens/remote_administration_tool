@@ -1,73 +1,54 @@
+"""Agente (servidor TCP). Etapa 1: eco sobre o protocolo com framing.
+
+Atende um controlador por vez. Mensagem malformada ou queda do controlador
+encerram só aquela sessão; o agente volta a escutar.
+"""
+
 import socket
-import struct
-import json
 
-def recv_all(sock, n):
-    """
-    Garante que lê exatamente n bytes do socket, contornando
-    o comportamento de stream do TCP (fragmentação).
-    """
-    data = bytearray()
-    while len(data) < n:
-        packet = sock.recv(n - len(data))
-        if not packet:
-            return None
-        data.extend(packet)
-    return bytes(data)
+from shared.log import setup_logging
+from shared.protocol import DEFAULT_PORT, ProtocolError, make_response, validate
+from shared.receiver import recv_msg
+from shared.sender import send_msg
 
-def run_agent(host='0.0.0.0', port=5000):
-    # Criação do socket TCP (família IPv4, tipo TCP/SOCK_STREAM)
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    
-    # Permite reutilizar a porta imediatamente após fechar o programa
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    
-    server_socket.bind((host, port))
-    server_socket.listen(1)
-    print(f"[*] Agente (Servidor) a escutar na porta {port}...")
+log = setup_logging("agente", "logs/agente.log")
 
-    while True:
-        client_sock, addr = server_socket.accept()
-        print(f"[+] Conexão aceite do controlador: {addr}")
-        
+
+def handle_session(conn: socket.socket, addr: tuple) -> None:
+    origem = f"{addr[0]}:{addr[1]}"
+    log.info("conexão aceita de %s", origem)
+    try:
+        while True:
+            try:
+                msg = recv_msg(conn)
+                if msg is None:  # controlador encerrou de forma limpa
+                    break
+                validate(msg)
+            except ProtocolError as exc:
+                log.warning("%s enviou mensagem inválida: %s", origem, exc)
+                break
+            log.info("%s -> %s (id=%s)", origem, msg["acao"], msg["id"])
+            send_msg(conn, make_response(msg, resultado={"eco": msg.get("args", {})}))
+    except (ConnectionError, OSError) as exc:
+        log.warning("conexão com %s interrompida: %s", origem, exc)
+    finally:
+        conn.close()
+        log.info("sessão com %s encerrada", origem)
+
+
+def run_agent(host: str = "0.0.0.0", port: int = DEFAULT_PORT) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((host, port))
+        server.listen(1)
+        log.info("agente escutando em %s:%d", host, port)
         try:
             while True:
-                # 1. Ler o cabeçalho de 4 bytes com o tamanho da mensagem (Big-Endian '!I')
-                raw_length = recv_all(client_sock, 4)
-                if not raw_length:
-                    break
-                
-                msg_length = struct.unpack('!I', raw_length)[0]
-                
-                # 2. Ler exatamente o corpo da mensagem com base no tamanho N
-                raw_data = recv_all(client_sock, msg_length)
-                if not raw_data:
-                    break
-                
-                # 3. Decodificar o JSON recebido
-                message = json.loads(raw_data.decode('utf-8'))
-                print(f"[Recebido] ID: {message.get('id')} | Ação: {message.get('acao')}")
-                
-                # 4. Construir a resposta de eco (para testar o protocolo)
-                response = {
-                    "id": message.get("id"),
-                    "tipo": "resposta",
-                    "acao": message.get("acao"),
-                    "status": "ok",
-                    "resultado": "Comando processado com sucesso pelo agente."
-                }
-                
-                # 5. Empacotar e enviar a resposta de volta com o mesmo framing de 4 bytes
-                resp_bytes = json.dumps(response).encode('utf-8')
-                resp_header = struct.pack('!I', len(resp_bytes))
-                
-                client_sock.sendall(resp_header + resp_bytes)
+                conn, addr = server.accept()
+                handle_session(conn, addr)  # um controlador por vez
+        except KeyboardInterrupt:
+            log.info("agente encerrado manualmente")
 
-        except (ConnectionResetError, BrokenPipeError):
-            print("[-] Conexão interrompida abruptamente pelo controlador.")
-        finally:
-            client_sock.close()
-            print("[-] Conexão fechada. À espera de nova ligação...\n")
 
 if __name__ == "__main__":
     run_agent()
