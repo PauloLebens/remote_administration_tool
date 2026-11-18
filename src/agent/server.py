@@ -6,6 +6,8 @@ import logging
 import socket
 import threading
 
+from agent.handlers.exec_handler import handle_exec
+from agent.handlers.sysinfo_handler import handle_sysinfo
 from agent.session import Handler, Session
 from shared.protocol import DEFAULT_PORT, Acao
 
@@ -14,6 +16,8 @@ def default_handlers() -> dict[str, Handler]:
     """Tratadores disponíveis. Cada etapa nova registra suas ações aqui."""
     return {
         Acao.ECHO: lambda msg: {"eco": msg.get("args", {})},
+        Acao.EXEC: handle_exec,
+        Acao.SYSINFO: handle_sysinfo,
     }
 
 

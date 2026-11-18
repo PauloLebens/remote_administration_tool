@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import socket
 from typing import Any, Callable
@@ -16,6 +17,12 @@ from shared.sender import send_msg
 # Um tratador recebe a mensagem validada e devolve o `resultado` da resposta.
 # Para sinalizar erro, basta levantar uma exceção (vira resposta com status "erro").
 Handler = Callable[[dict[str, Any]], Any]
+
+
+def _resumo(args: Any, limite: int = 300) -> str:
+    """Argumentos em uma linha, cortados para não inundar o log (ex.: blocos de arquivo)."""
+    texto = json.dumps(args, ensure_ascii=False, default=repr)
+    return texto if len(texto) <= limite else f"{texto[:limite]}…(+{len(texto) - limite} caracteres)"
 
 
 class Session:
@@ -101,7 +108,9 @@ class Session:
         return True
 
     def _dispatch(self, msg: dict[str, Any]) -> None:
-        self.log.info("%s -> %s (id=%s)", self.origem, msg["acao"], msg["id"])
+        self.log.info(
+            "%s -> %s (id=%s) args=%s", self.origem, msg["acao"], msg["id"], _resumo(msg.get("args"))
+        )
         if msg["tipo"] != Tipo.COMANDO:
             resp = make_response(msg, erro="o agente só aceita mensagens do tipo 'comando'")
         elif (handler := self.handlers.get(msg["acao"])) is None:
