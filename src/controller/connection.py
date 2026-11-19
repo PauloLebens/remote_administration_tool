@@ -34,6 +34,13 @@ class AuthError(ConnectionError):
 
 
 class Connection:
+    """Sessão do controlador com um agente: conecta, autentica e mantém duas threads
+    (leitura e escrita) ligadas por filas.
+
+    Use `send()` para comandos assíncronos (a resposta chega em `incoming`) ou `request()`
+    para esperar a resposta. Funciona como gerenciador de contexto: sair do `with` fecha
+    a conexão.
+    """
     def __init__(
         self,
         host: str,
@@ -42,6 +49,9 @@ class Connection:
         secret: str,
         log: logging.Logger | None = None,
     ) -> None:
+        """`secret` é o segredo compartilhado do handshake. Só prepara o objeto; a rede só é
+        usada em connect().
+        """
         self._secret = secret
         self.host = host
         self.port = port
@@ -58,6 +68,7 @@ class Connection:
 
     @property
     def connected(self) -> bool:
+        """True enquanto a conexão está aberta e nenhum dos lados a encerrou."""
         return self._sock is not None and not self._closed.is_set()
 
     def connect(self, timeout: float = 5.0) -> None:
@@ -145,6 +156,9 @@ class Connection:
                     pass
 
     def close(self) -> None:
+        """Encerra a conexão. Pode ser chamado mais de uma vez: acorda quem espera resposta, para
+        as threads e avisa a desconexão uma única vez.
+        """
         if self._closed.is_set():
             self._close_socket()  # a queda pode ter vindo do agente: garante o fechamento
             return
@@ -158,6 +172,9 @@ class Connection:
         self._notify_disconnect("encerrada localmente")
 
     def _close_socket(self) -> None:
+        """Fecha o socket ignorando erros: ele pode já ter sido fechado pelo outro lado ou por
+        outra thread.
+        """
         if self._sock is None:
             return
         for op in (lambda: self._sock.shutdown(socket.SHUT_RDWR), self._sock.close):
@@ -167,14 +184,19 @@ class Connection:
                 pass
 
     def __enter__(self) -> "Connection":
+        """Permite `with Connection(...) as conn`."""
         return self
 
     def __exit__(self, *exc) -> None:
+        """Fecha a conexão ao sair do `with`, mesmo se houve exceção."""
         self.close()
 
     # --- threads ---------------------------------------------------------
 
     def _read_loop(self) -> None:
+        """Thread de leitura: entrega cada resposta a quem espera por ela (request) e o resto à
+        fila `incoming`. Ao terminar, por qualquer motivo, fecha tudo e avisa a desconexão.
+        """
         reason = "agente encerrou a conexão"
         try:
             while True:
@@ -200,6 +222,9 @@ class Connection:
             self._notify_disconnect(reason)
 
     def _write_loop(self) -> None:
+        """Thread de escrita: envia os comandos da fila, um por vez e na ordem. Um `None` na fila
+        é o sinal para parar.
+        """
         while True:
             cmd = self._outgoing.get()
             if cmd is None:
@@ -212,6 +237,9 @@ class Connection:
                 break
 
     def _notify_disconnect(self, motivo: str) -> None:
+        """Coloca o evento DESCONECTADO em `incoming`, uma única vez, para a interface saber que
+        a conexão acabou e por quê.
+        """
         with self._notify_lock:  # avisa uma única vez
             if self._notified:
                 return

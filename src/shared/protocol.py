@@ -24,6 +24,9 @@ DEFAULT_PORT = 5000
 
 
 class Tipo:
+    """Tipos de mensagem do envelope: comando (pedido do controlador), resposta (volta com o
+    mesmo `id` do comando) e evento (aviso sem pedido prévio).
+    """
     COMANDO = "comando"
     RESPOSTA = "resposta"
     EVENTO = "evento"
@@ -32,6 +35,9 @@ class Tipo:
 
 
 class Acao:
+    """Nomes das ações do protocolo, definidos num só lugar para agente e controlador não
+    divergirem. `TODAS` lista as ações conhecidas.
+    """
     DESAFIO = "DESAFIO"  # evento do agente com o nonce, logo após a conexão
     AUTH = "AUTH"
     ECHO = "ECHO"
@@ -56,6 +62,7 @@ class Acao:
 
 
 class Status:
+    """Valores do campo `status` de uma resposta: ok ou erro."""
     OK = "ok"
     ERRO = "erro"
 
@@ -65,6 +72,7 @@ class ProtocolError(Exception):
 
 
 def _agora() -> str:
+    """Data/hora atual em UTC, em ISO-8601, para o campo `timestamp`."""
     return datetime.now(timezone.utc).isoformat()
 
 

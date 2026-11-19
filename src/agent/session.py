@@ -26,6 +26,11 @@ def _resumo(args: Any, limite: int = 300) -> str:
 
 
 class Session:
+    """Um controlador conectado ao agente, do handshake ao encerramento.
+
+    Roda na thread do servidor: autentica o controlador, lê comandos em laço e despacha
+    cada um ao tratador da ação. As falhas ficam isoladas aqui e nunca derrubam o agente.
+    """
     def __init__(
         self,
         conn: socket.socket,
@@ -35,6 +40,9 @@ class Session:
         secret: str,
         auth_timeout: float = 10.0,
     ) -> None:
+        """`conn` é o socket já aceito e `addr` o endereço do controlador (usado em logs).
+        `handlers` mapeia ação -> função; `secret` e `auth_timeout` controlam o handshake.
+        """
         self.conn = conn
         self.origem = f"{addr[0]}:{addr[1]}"
         self.handlers = handlers
@@ -108,6 +116,12 @@ class Session:
         return True
 
     def _dispatch(self, msg: dict[str, Any]) -> None:
+        """Executa um comando e envia a resposta, registrando o comando no log (Seção 3).
+
+        Ação desconhecida, argumento inválido ou falha esperada viram resposta de erro. Um
+        bug no tratador é logado com traceback e também vira resposta de erro, sem derrubar
+        a sessão.
+        """
         self.log.info(
             "%s -> %s (id=%s) args=%s", self.origem, msg["acao"], msg["id"], _resumo(msg.get("args"))
         )

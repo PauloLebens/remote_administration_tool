@@ -29,6 +29,9 @@ class IntegrityError(TransferError):
 
 
 def _resultado(resp: dict[str, Any], acao: str) -> dict[str, Any]:
+    """Extrai o `resultado` de uma resposta. Resposta de erro vira TransferError com o texto
+    do agente.
+    """
     if resp.get("status") != Status.OK:
         raise TransferError(f"{acao}: {resp.get('erro', 'erro desconhecido')}")
     resultado = resp.get("resultado")

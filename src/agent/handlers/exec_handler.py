@@ -30,12 +30,16 @@ class _Capture(threading.Thread):
     """Lê um pipe até o fim, guardando no máximo `limit` bytes."""
 
     def __init__(self, stream, limit: int) -> None:
+        """`stream` é o pipe a drenar; `limit`, o máximo de bytes guardados."""
         super().__init__(daemon=True)
         self.stream, self.limit = stream, limit
         self.buf = bytearray()
         self.total = 0
 
     def run(self) -> None:
+        """Lê o pipe até o fim. Continua lendo (e descartando) depois do limite: se parasse,
+        o processo travaria escrevendo num pipe cheio.
+        """
         with self.stream:
             while chunk := self.stream.read1(65536):
                 self.total += len(chunk)
@@ -45,6 +49,7 @@ class _Capture(threading.Thread):
 
     @property
     def truncated(self) -> bool:
+        """True se o processo escreveu mais do que o limite guardado."""
         return self.total > self.limit
 
 
@@ -71,6 +76,9 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 
 
 def run_command(cmd: str, timeout: float, max_output: int = MAX_OUTPUT) -> dict[str, Any]:
+    """Executa `cmd` num shell, com timeout e captura limitada de stdout/stderr, e devolve o
+    dicionário de resultado. Ao estourar o prazo mata a árvore inteira de processos.
+    """
     popen_kw: dict[str, Any] = (
         {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         if os.name == "nt"
@@ -111,6 +119,9 @@ def run_command(cmd: str, timeout: float, max_output: int = MAX_OUTPUT) -> dict[
 
 
 def handle_exec(msg: dict[str, Any]) -> dict[str, Any]:
+    """Tratador da ação EXEC (RF2): valida `cmd` e `timeout`, executa e registra o desfecho
+    no log. Argumento inválido levanta ValueError, que vira resposta de erro.
+    """
     args = msg.get("args") or {}
     cmd = args.get("cmd")
     if not isinstance(cmd, str) or not cmd.strip():

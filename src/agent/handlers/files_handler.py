@@ -43,6 +43,7 @@ HASH_BLOCO = 1024 * 1024
 
 
 def sha256_arquivo(caminho: Path | str) -> str:
+    """SHA-256 do arquivo inteiro, lido em blocos de 1 MB para não carregá-lo na memória."""
     h = hashlib.sha256()
     with open(caminho, "rb") as f:
         while bloco := f.read(HASH_BLOCO):
@@ -51,6 +52,9 @@ def sha256_arquivo(caminho: Path | str) -> str:
 
 
 def _int(args: dict[str, Any], nome: str, padrao: int, minimo: int = 0) -> int:
+    """Lê um argumento inteiro de `args`, com valor padrão e mínimo. Recusa booleano (que em
+    Python também é int), texto e valores abaixo do mínimo.
+    """
     valor = args.get(nome, padrao)
     if isinstance(valor, bool) or not isinstance(valor, int) or valor < minimo:
         raise ValueError(f"'{nome}' deve ser um inteiro >= {minimo}")
@@ -58,6 +62,7 @@ def _int(args: dict[str, Any], nome: str, padrao: int, minimo: int = 0) -> int:
 
 
 def _decodificar(dados: Any) -> bytes:
+    """Decodifica base64 estrito. Entrada que não é texto ou não é base64 válido vira ValueError."""
     if not isinstance(dados, str):
         raise ValueError("'dados' deve ser texto base64")
     try:
@@ -67,14 +72,22 @@ def _decodificar(dados: Any) -> bytes:
 
 
 def _iso(timestamp: float) -> str:
+    """Data/hora de um arquivo em ISO-8601, UTC."""
     return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
 
 
 class FileHandlers:
+    """Tratadores de LS, GET e PUT, com restrição opcional a um diretório raiz.
+
+    Existe como classe porque os três compartilham a raiz e a resolução de caminhos.
+    A raiz limita arquivos, não execução: ela não restringe o EXEC.
+    """
     def __init__(self, raiz: str | Path | None = None) -> None:
+        """`raiz`, se informada, limita todos os caminhos a esse diretório."""
         self.raiz = Path(raiz).resolve() if raiz else None
 
     def registrar(self, handlers: dict[str, Any]) -> None:
+        """Registra LS, GET e PUT no dicionário de tratadores do servidor."""
         handlers[Acao.LS] = self.ls
         handlers[Acao.GET] = self.get
         handlers[Acao.PUT] = self.put
@@ -82,6 +95,12 @@ class FileHandlers:
     # --- caminhos --------------------------------------------------------
 
     def _resolver(self, caminho: Any) -> Path:
+        """Transforma o `caminho` do pedido num Path absoluto e seguro.
+
+        Caminho relativo vale a partir da raiz (ou do diretório atual do agente, sem raiz).
+        `..` e links simbólicos são resolvidos antes da checagem; sair da raiz levanta
+        PermissionError.
+        """
         if not isinstance(caminho, str) or not caminho.strip():
             raise ValueError("'caminho' deve ser um texto não vazio")
         p = Path(caminho).expanduser()
@@ -93,6 +112,9 @@ class FileHandlers:
         return p
 
     def _pai(self, p: Path) -> str | None:
+        """Diretório pai, para navegação. None no topo do sistema de arquivos ou na raiz (não se
+        sobe acima dela).
+        """
         if p == p.parent or (self.raiz is not None and p == self.raiz):
             return None  # não se navega acima da raiz
         return str(p.parent)
@@ -101,6 +123,10 @@ class FileHandlers:
 
     @staticmethod
     def _atributos(nome: str, caminho: str, entrada: os.DirEntry | None = None) -> dict[str, Any]:
+        """Monta os atributos de uma entrada (tipo, tamanho, data, permissões). Se não der para
+        ler (link quebrado, sem permissão), devolve a entrada com o campo `erro` em vez de
+        derrubar a listagem inteira.
+        """
         try:
             st = entrada.stat(follow_symlinks=False) if entrada else os.stat(caminho)
             if stat.S_ISLNK(st.st_mode):
@@ -128,6 +154,10 @@ class FileHandlers:
             return {"nome": nome, "tipo": "desconhecido", "erro": str(exc)}
 
     def ls(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """LS (RF4): lista um diretório, ou mostra os atributos se o caminho for um arquivo.
+        Diretórios vêm primeiro, depois ordem alfabética. Listagens muito grandes são cortadas
+        e marcadas como `truncado`.
+        """
         args = msg.get("args") or {}
         p = self._resolver(args.get("caminho", "."))
         if not p.exists():
@@ -162,6 +192,10 @@ class FileHandlers:
     # --- GET -------------------------------------------------------------
 
     def get(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """GET (RF5): devolve um bloco do arquivo a partir de `offset` (em base64), com `total` e
+        `eof`. O SHA-256 do arquivo inteiro vem se o pedido incluir `sha256=true`. Recusa
+        diretórios e arquivos que não sejam regulares.
+        """
         args = msg.get("args") or {}
         p = self._resolver(args.get("caminho"))
         if p.is_dir():
@@ -201,6 +235,12 @@ class FileHandlers:
     # --- PUT -------------------------------------------------------------
 
     def put(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """PUT (RF5): recebe um bloco e o grava em `<destino>.parte`.
+
+        No bloco final confere o SHA-256 e só então renomeia para o destino; se não
+        conferir, apaga a parte. Não sobrescreve sem `sobrescrever=true` e só aceita o bloco
+        que continua exatamente de onde a parte parou.
+        """
         args = msg.get("args") or {}
         destino = self._resolver(args.get("caminho"))
         offset = _int(args, "offset", 0)

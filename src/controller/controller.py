@@ -30,6 +30,7 @@ AJUDA = """\
 
 
 def _tamanho(n: float) -> str:
+    """Formata uma quantidade de bytes de forma legível (ex.: 195.3 KB)."""
     for unidade in ("B", "KB", "MB", "GB"):
         if n < 1024 or unidade == "GB":
             return f"{n:.0f} {unidade}" if unidade == "B" else f"{n:.1f} {unidade}"
@@ -38,12 +39,16 @@ def _tamanho(n: float) -> str:
 
 
 def _resultado(resp: dict[str, Any]) -> Any:
+    """Extrai o `resultado` de uma resposta. Se o agente respondeu erro, levanta
+    TransferError com a mensagem dele.
+    """
     if resp.get("status") != Status.OK:
         raise TransferError(resp.get("erro", "erro desconhecido"))
     return resp["resultado"]
 
 
 def formatar_info(i: dict[str, Any]) -> str:
+    """Texto legível do resultado do SYSINFO: host, SO, CPU, memória e discos."""
     so, cpu, mem = i["so"], i["cpu"], i["memoria"]
     linhas = [
         f"{i['hostname']}  ({i['usuario']})",
@@ -58,6 +63,7 @@ def formatar_info(i: dict[str, Any]) -> str:
 
 
 def formatar_ls(r: dict[str, Any]) -> str:
+    """Texto legível do resultado do LS: permissões, tamanho, data e nome (diretórios com `/`)."""
     linhas = [r["caminho"] + ("/" if r["e_diretorio"] else "")]
     for e in r["entradas"]:
         if "erro" in e:
@@ -118,6 +124,9 @@ def executar(conn: Connection, linha: str, progresso=None) -> str:
 
 
 def run_controller(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
+    """Laço interativo da CLI: conecta, autentica e lê comandos do operador até 'sair' ou a
+    conexão cair.
+    """
     log = setup_logging("controlador", "logs/controlador.log")
     conn = Connection(host, port, secret=get_secret(), log=log)
     try:
@@ -132,6 +141,9 @@ def run_controller(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
     done = threading.Event()
 
     def mensagens_avulsas() -> None:  # eventos que não são resposta a um `request`
+        """Thread que mostra o que chega em `incoming` (eventos sem pedido) e detecta a
+        desconexão. As respostas dos comandos não passam por aqui: voltam direto pelo request.
+        """
         while not done.is_set():
             try:
                 msg = conn.incoming.get(timeout=0.2)
@@ -146,6 +158,7 @@ def run_controller(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
     mostrou_progresso: list[bool] = []
 
     def progresso(feito: int, total: int) -> None:
+        """Desenha a porcentagem da transferência na mesma linha (stderr)."""
         mostrou_progresso.append(True)
         pct = 100 if total == 0 else feito * 100 // total
         print(f"\r  {pct:3d}%  {_tamanho(feito)} / {_tamanho(total)}", end="", file=sys.stderr, flush=True)

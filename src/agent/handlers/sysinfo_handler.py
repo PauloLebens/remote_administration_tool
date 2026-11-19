@@ -13,6 +13,9 @@ import psutil
 
 
 def _discos() -> list[dict[str, Any]]:
+    """Lista as partições com o uso de cada uma. Pula as que não dá para consultar (leitor
+    vazio, sem permissão).
+    """
     discos = []
     for p in psutil.disk_partitions(all=False):
         try:
@@ -34,6 +37,9 @@ def _discos() -> list[dict[str, Any]]:
 
 
 def get_sysinfo() -> dict[str, Any]:
+    """Coleta SO, usuário, hostname, CPU, memória e discos. Só leitura: não altera nada na
+    máquina.
+    """
     mem = psutil.virtual_memory()
     return {
         "so": {
@@ -62,4 +68,5 @@ def get_sysinfo() -> dict[str, Any]:
 
 
 def handle_sysinfo(msg: dict[str, Any]) -> dict[str, Any]:
+    """Tratador da ação SYSINFO (RF3). Não usa argumentos."""
     return get_sysinfo()

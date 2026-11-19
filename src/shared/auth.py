@@ -20,14 +20,23 @@ MIN_SECRET_LEN = 8
 
 
 def make_nonce() -> str:
+    """Gera o desafio: 128 bits aleatórios, em hexadecimal, novos a cada conexão. É isso que
+    impede reaproveitar uma prova capturada na rede.
+    """
     return secrets.token_hex(16)
 
 
 def compute_proof(secret: str, nonce: str) -> str:
+    """Calcula a prova de que se conhece o segredo: HMAC-SHA256 do nonce, com o segredo como
+    chave. O segredo em si nunca trafega.
+    """
     return hmac.new(secret.encode("utf-8"), nonce.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def verify_proof(secret: str, nonce: str, proof: object) -> bool:
+    """Confere a prova recebida. Aceita só texto e compara em tempo constante, para a
+    comparação não vazar quantos caracteres batem.
+    """
     if not isinstance(proof, str):
         return False
     esperado = compute_proof(secret, nonce)
@@ -36,6 +45,9 @@ def verify_proof(secret: str, nonce: str, proof: object) -> bool:
 
 
 def check_secret(secret: str) -> str:
+    """Recusa segredos curtos demais (menos de MIN_SECRET_LEN caracteres). Devolve o próprio
+    segredo, para poder ser usada em linha.
+    """
     if len(secret) < MIN_SECRET_LEN:
         raise ValueError(f"o segredo deve ter pelo menos {MIN_SECRET_LEN} caracteres")
     return secret

@@ -27,6 +27,11 @@ def default_handlers(raiz: str | None = None) -> dict[str, Handler]:
 
 
 class AgentServer:
+    """Servidor TCP do agente: escuta numa porta e atende um controlador por vez (Session).
+
+    Uso: open() abre a porta, serve_forever() atende e stop() encerra, de qualquer thread,
+    derrubando também a sessão ativa. É a base do kill switch.
+    """
     def __init__(
         self,
         host: str = "0.0.0.0",
@@ -38,6 +43,10 @@ class AgentServer:
         auth_timeout: float = 10.0,
         raiz: str | None = None,
     ) -> None:
+        """`secret` é obrigatório: sem autenticação o agente não sobe. `handlers` substitui o
+        conjunto padrão de ações; `raiz` restringe LS/GET/PUT e só vale com os tratadores
+        padrão. `port=0` deixa o SO escolher a porta (útil em testes).
+        """
         if not secret:  # sem autenticação o agente não sobe
             raise ValueError("o agente exige um segredo compartilhado")
         self._secret = secret

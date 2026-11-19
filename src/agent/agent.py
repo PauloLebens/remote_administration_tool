@@ -9,6 +9,9 @@ from shared.protocol import DEFAULT_PORT
 
 
 def main(host: str = "0.0.0.0", port: int = DEFAULT_PORT, raiz: str | None = None) -> None:
+    """Ponto de entrada do agente. O início é sempre manual (Seção 3: nada de execução
+    automática); o segredo é pedido aqui e o Ctrl+C encerra com registro no log.
+    """
     log = setup_logging("agente", "logs/agente.log")
     server = AgentServer(host, port, secret=get_secret(), log=log, raiz=raiz)
     try:
