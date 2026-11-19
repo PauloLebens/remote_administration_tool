@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent.agent import _config_da_linha_de_comando as config_agente
+from agent.agent import mensagem_ao_escutar
 from controller.controller import _config_da_linha_de_comando as config_controlador
 from shared.config import CONFIG_ENV, AgentConfig, ConfigError, ControllerConfig
 
@@ -179,6 +180,27 @@ class SobrescritaTests(Base):
             config_agente(["--raiz", str(self.dir / "nao_existe")])
         self.assertIn("raiz", str(cm.exception.code))
         self.assertEqual(config_agente(["--raiz", str(self.dir)]).raiz, str(self.dir))
+
+
+class MensagemPortaTests(unittest.TestCase):
+    def test_porta_ocupada_explica_a_causa_e_a_saida(self):
+        import errno
+        msg = mensagem_ao_escutar(OSError(errno.EADDRINUSE, "Address already in use"), AgentConfig(porta=5055))
+        for trecho in ("0.0.0.0:5055", "já está em uso", "AirPlay", "--port", "config.json"):
+            self.assertIn(trecho, msg)
+
+    def test_outros_erros_nao_ganham_a_dica_de_porta(self):
+        msg = mensagem_ao_escutar(PermissionError(13, "Permission denied"), AgentConfig(porta=80))
+        self.assertIn("Permission denied", msg)
+        self.assertNotIn("AirPlay", msg)
+
+
+class PortaPadraoTests(unittest.TestCase):
+    def test_o_padrao_nao_e_uma_porta_que_o_macos_ocupa(self):
+        # O receptor AirPlay do macOS ocupa a 5000 (e a 7000): um padrão nelas faria o agente
+        # falhar ao subir justamente nos Macs.
+        self.assertNotIn(AgentConfig().porta, (5000, 7000))
+        self.assertEqual(AgentConfig().porta, ControllerConfig().porta)  # agente e controlador combinam
 
 
 class RegrasDaSecao3Tests(unittest.TestCase):

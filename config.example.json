@@ -1,7 +1,7 @@
 {
   "agente": {
     "host": "0.0.0.0",
-    "porta": 5000,
+    "porta": 5055,
     "raiz": null,
     "arquivo_log": "logs/agente.log",
     "auth_timeout": 10.0,
@@ -12,7 +12,7 @@
   },
   "controlador": {
     "host": "127.0.0.1",
-    "porta": 5000,
+    "porta": 5055,
     "arquivo_log": "logs/controlador.log",
     "timeout_conexao": 5.0,
     "timeout_requisicao": 30.0,

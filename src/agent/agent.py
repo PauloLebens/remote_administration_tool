@@ -1,6 +1,7 @@
 """Ponto de entrada do agente. Início manual: nada roda sozinho."""
 
 import argparse
+import errno
 import signal
 import sys
 import threading
@@ -17,6 +18,22 @@ from agent.ui.indicador import JanelaIndicador
 from shared.auth import get_secret
 from shared.config import AgentConfig, ConfigError
 from shared.log import setup_logging
+
+
+def mensagem_ao_escutar(exc: OSError, config: AgentConfig) -> str:
+    """Texto para o operador quando o agente não consegue abrir a porta.
+
+    Porta ocupada é o caso comum, e vale dizer a causa provável (no macOS, o AirPlay) e a
+    saída, em vez de só repetir o erro do sistema.
+    """
+    base = f"não foi possível escutar em {config.host}:{config.porta}: {exc}"
+    if exc.errno == errno.EADDRINUSE:
+        base += (
+            f"\nA porta {config.porta} já está em uso: outro agente já rodando, ou outro programa "
+            "(no macOS, a 5000 costuma ser o receptor AirPlay). Use --port, ou o campo "
+            "'porta' do config.json, para escolher outra."
+        )
+    return base
 
 
 def main(config: AgentConfig) -> None:
@@ -57,7 +74,7 @@ def main(config: AgentConfig) -> None:
     try:
         server.open()  # falha aqui (porta em uso) aparece na hora, e não numa thread
     except OSError as exc:
-        sys.exit(f"não foi possível escutar em {config.host}:{config.porta}: {exc}")
+        sys.exit(mensagem_ao_escutar(exc, config))
 
     def servir() -> None:
         """Roda o servidor; se ele terminar por qualquer motivo, fecha o programa."""

@@ -20,7 +20,10 @@ MAX_MESSAGE_SIZE = 16 * 1024 * 1024
 CHUNK_SIZE = 64 * 1024
 HEADER_SIZE = 4
 
-DEFAULT_PORT = 5000
+# Não é a 5000 (o exemplo do enunciado): desde o macOS 12 o receptor AirPlay do Centro de
+# Controle a ocupa, e o agente nem conseguiria subir nos Macs. É só o padrão: --port e o
+# config.json valem sobre ele.
+DEFAULT_PORT = 5055
 
 
 class Tipo:
