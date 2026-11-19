@@ -1,0 +1,3 @@
+# scripts do Windows precisam manter CRLF mesmo se o Git converter fins de linha
+*.bat text eol=crlf
+*.command text eol=lf
