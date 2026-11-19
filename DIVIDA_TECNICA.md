@@ -115,6 +115,50 @@ as regras de transparência valem com mais força:
 
 ---
 
+## DT-02 — Captura de mouse e teclado do operador (controlador)
+
+**Registrado em:** 2026-11-19 · **Prioridade:** média · **Exigido pela especificação?** Não (a interface do controlador é exigida; esta é a forma de capturar a entrada)
+
+### O que se quer
+
+No controlador gráfico (Etapa 8), o operador deve controlar a máquina do agente usando o
+próprio mouse e teclado, como num VNC: mexer o mouse sobre a área da tela remota e ver o
+cursor do agente acompanhar, digitar e ver o texto aparecer lá.
+
+### Decisão tomada
+
+O plano previa `controller/input_listener.py` capturando mouse e teclado com um listener
+global do pynput. **Isso não foi feito, de propósito.** A captura deve vir dos **eventos da
+própria janela Qt** (`mouseMoveEvent`, `mousePressEvent`, `wheelEvent`, `keyPressEvent`),
+traduzidos nos comandos MOUSE_MOVE, MOUSE_CLICK, MOUSE_SCROLL e KEY que o agente já aceita.
+
+### Por quê
+
+- Um listener global captura **tudo** que o operador digita, em qualquer aplicativo, mesmo
+  com a janela do controlador em segundo plano. É exatamente o comportamento de um keylogger
+  ("keylogging persistente em segundo plano", Seção 3), só que na máquina do operador.
+- Eventos da janela só existem enquanto o foco está nela: a captura é visível e limitada
+  ao que o operador está de fato fazendo no controlador.
+- Não exige a permissão de Monitoramento de Entrada do macOS.
+
+### Pontos de atenção para quando for feito
+
+- Mapear as coordenadas da área exibida para as da tela do agente. O agente hoje não informa
+  o tamanho da tela; incluir isso no SYSINFO (a captura `mss`, do RF9, já o conhece).
+- Limitar a taxa de MOUSE_MOVE (um por quadro, e não um por evento) e **registrar no log
+  de forma agregada**: hoje cada comando gera uma linha, e um arrastar do mouse geraria
+  centenas por segundo.
+- Soltar botões e teclas pressionadas se a conexão cair (hoje só há clique completo, sem
+  press/release separados, então isso ainda não é um risco).
+
+### Arquivos envolvidos
+
+- `src/controller/input_listener.py` (vazio; remover ou transformar neste tradutor de eventos)
+- `src/agent/handlers/input_handler.py` (lado do agente, já pronto)
+- `src/agent/handlers/sysinfo_handler.py` (informar o tamanho da tela)
+
+---
+
 ## Modelo para novos itens
 
 ```

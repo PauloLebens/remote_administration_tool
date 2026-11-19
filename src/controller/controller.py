@@ -26,6 +26,12 @@ AJUDA = """\
   ls [caminho]               lista um diretório do agente
   get <remoto> [local]       baixa um arquivo do agente (verifica SHA-256)
   put <local> [remoto]       envia um arquivo ao agente (verifica SHA-256)
+  mouse <x> <y>              move o cursor do agente (coordenadas absolutas)
+  mouse rel <dx> <dy>        move o cursor em relação à posição atual
+  click [esq|dir|meio] [duplo]  clica na posição atual do cursor
+  scroll <dy> [dx]           rola a roda do mouse (dy positivo = para cima)
+  digitar <texto>            digita o texto na máquina do agente
+  combo <tecla> [tecla...]   pressiona teclas juntas (ex.: combo ctrl c)
   echo <texto>               teste de ida e volta
   sair                       encerra"""
 
@@ -77,6 +83,58 @@ def formatar_ls(r: dict[str, Any]) -> str:
     if r["truncado"]:
         linhas.append("  … listagem cortada (diretório muito grande)")
     return "\n".join(linhas)
+
+
+def _comando_entrada(conn: Connection, cmd: str, resto: str) -> str:
+    """Traduz os comandos de mouse e teclado da CLI em pedidos ao agente.
+
+    Devolve o texto a mostrar, ou uma mensagem de uso se os argumentos não fecham.
+    Erros do agente (tecla desconhecida, agente sem entrada...) viram TransferError.
+    """
+    try:
+        partes = shlex.split(resto) if cmd != "digitar" else []
+    except ValueError as exc:
+        return f"argumentos inválidos: {exc}"
+
+    def inteiros(textos: list[str]) -> list[int] | None:
+        """Converte os argumentos em inteiros, ou None se algum não for número."""
+        try:
+            return [int(t) for t in textos]
+        except ValueError:
+            return None
+
+    if cmd == "mouse":
+        relativo = partes[:1] == ["rel"]
+        n = inteiros(partes[1:] if relativo else partes)
+        if n is None or len(n) != 2:
+            return "uso: mouse <x> <y>   ou   mouse rel <dx> <dy>"
+        r = _resultado(conn.request(Acao.MOUSE_MOVE, {"x": n[0], "y": n[1], "abs": not relativo}))
+        return f"cursor em ({r['x']}, {r['y']})"
+    if cmd == "click":
+        args: dict[str, Any] = {}
+        for p in partes:
+            if p.lower() == "duplo":
+                args["duplo"] = True
+            else:
+                args["botao"] = p
+        r = _resultado(conn.request(Acao.MOUSE_CLICK, args))
+        return f"clique {'duplo ' if r['duplo'] else ''}{r['botao']}"
+    if cmd == "scroll":
+        n = inteiros(partes)
+        if n is None or not 1 <= len(n) <= 2:
+            return "uso: scroll <dy> [dx]"
+        r = _resultado(conn.request(Acao.MOUSE_SCROLL, {"dy": n[0], "dx": n[1] if len(n) > 1 else 0}))
+        return f"rolou dy={r['dy']} dx={r['dx']}"
+    if cmd == "digitar":
+        if not resto:
+            return "uso: digitar <texto>"
+        r = _resultado(conn.request(Acao.KEY, {"texto": resto}))
+        return f"digitados: {r['digitados']} caracteres"
+    # combo
+    if not partes:
+        return "uso: combo <tecla> [tecla...]   (ex.: combo ctrl c)"
+    r = _resultado(conn.request(Acao.KEY, {"combo": partes}))
+    return f"combo: {'+'.join(r['combo'])}"
 
 
 def executar(
@@ -131,6 +189,8 @@ def executar(
             return f"baixado: {r['caminho']} ({_tamanho(r['tamanho'])}, sha256 {r['sha256'][:16]}… conferido)"
         r = upload(conn, args[0], args[1] if len(args) > 1 else Path(args[0]).name, progresso=progresso)
         return f"enviado: {r['caminho']} ({_tamanho(r['tamanho'])}, sha256 {r['sha256'][:16]}… conferido)"
+    if cmd in ("mouse", "click", "scroll", "digitar", "combo"):
+        return _comando_entrada(conn, cmd, resto)
     return f"comando desconhecido: {cmd} (digite 'ajuda')"
 
 

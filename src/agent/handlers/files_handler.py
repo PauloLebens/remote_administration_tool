@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agent.handlers.args import inteiro
 from shared.config import AgentConfig
 from shared.protocol import CHUNK_SIZE, Acao
 
@@ -49,16 +50,6 @@ def sha256_arquivo(caminho: Path | str) -> str:
         while bloco := f.read(HASH_BLOCO):
             h.update(bloco)
     return h.hexdigest()
-
-
-def _int(args: dict[str, Any], nome: str, padrao: int, minimo: int = 0) -> int:
-    """Lê um argumento inteiro de `args`, com valor padrão e mínimo. Recusa booleano (que em
-    Python também é int), texto e valores abaixo do mínimo.
-    """
-    valor = args.get(nome, padrao)
-    if isinstance(valor, bool) or not isinstance(valor, int) or valor < minimo:
-        raise ValueError(f"'{nome}' deve ser um inteiro >= {minimo}")
-    return valor
 
 
 def _decodificar(dados: Any) -> bytes:
@@ -213,8 +204,8 @@ class FileHandlers:
         if not p.is_file():  # dispositivos e FIFOs poderiam bloquear a leitura
             raise ValueError("não é um arquivo regular")
 
-        offset = _int(args, "offset", 0)
-        tamanho = min(_int(args, "tamanho", CHUNK_SIZE, minimo=1), CHUNK_SIZE)
+        offset = inteiro(args, "offset", 0, minimo=0)
+        tamanho = min(inteiro(args, "tamanho", CHUNK_SIZE, minimo=1), CHUNK_SIZE)
         total = p.stat().st_size
         if offset > total:
             raise ValueError(f"offset {offset} além do fim do arquivo ({total} bytes)")
@@ -251,7 +242,7 @@ class FileHandlers:
         """
         args = msg.get("args") or {}
         destino = self._resolver(args.get("caminho"))
-        offset = _int(args, "offset", 0)
+        offset = inteiro(args, "offset", 0, minimo=0)
         sobrescrever = args.get("sobrescrever", False) is True
         final = args.get("final", False) is True
         dados = _decodificar(args.get("dados", ""))

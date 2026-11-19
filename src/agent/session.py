@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import socket
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from shared.auth import make_nonce, verify_proof
 from shared.protocol import (
@@ -17,6 +17,30 @@ from shared.sender import send_msg
 # Um tratador recebe a mensagem validada e devolve o `resultado` da resposta.
 # Para sinalizar erro, basta levantar uma exceção (vira resposta com status "erro").
 Handler = Callable[[dict[str, Any]], Any]
+
+
+class Observador(Protocol):
+    """Quem precisa saber quando uma sessão autenticada começa e termina (o indicador visível)."""
+
+    def sessao_iniciada(self, origem: str) -> None:
+        """Chamada antes de o primeiro comando ser aceito; só volta quando o aviso já está
+        visível. Se levantar exceção, a sessão é recusada.
+        """
+
+    def sessao_encerrada(self) -> None:
+        """Chamada quando a sessão termina, por qualquer motivo."""
+
+
+def _args_para_log(acao: str, args: Any) -> Any:
+    """Argumentos como vão para o log.
+
+    O texto digitado com KEY é omitido (fica só o tamanho): senão o log viraria um coletor
+    de tudo que o operador digita na máquina, inclusive senhas, e a coleta de credenciais
+    está na lista proibida da Seção 3. O comando em si continua registrado.
+    """
+    if acao == Acao.KEY and isinstance(args, dict) and isinstance(args.get("texto"), str):
+        return {**args, "texto": f"<{len(args['texto'])} caracteres>"}
+    return args
 
 
 def _resumo(args: Any, limite: int = 300) -> str:
@@ -39,9 +63,11 @@ class Session:
         log: logging.Logger,
         secret: str,
         auth_timeout: float = 10.0,
+        observador: Observador | None = None,
     ) -> None:
         """`conn` é o socket já aceito e `addr` o endereço do controlador (usado em logs).
         `handlers` mapeia ação -> função; `secret` e `auth_timeout` controlam o handshake.
+        `observador` (o indicador visível) é avisado quando a sessão começa e termina.
         """
         self.conn = conn
         self.origem = f"{addr[0]}:{addr[1]}"
@@ -50,12 +76,16 @@ class Session:
         self._secret = secret
         self._auth_timeout = auth_timeout
         self._closing = False
+        self.observador = observador
+        self._indicador_ativo = False
 
     def run(self) -> None:
         """Autentica o controlador e o atende até ele sair, cair ou a sessão ser fechada."""
         self.log.info("conexão aceita de %s", self.origem)
         try:
             if not self._handshake():
+                return
+            if not self._iniciar_indicador():
                 return
             while True:
                 msg = recv_msg(self.conn)
@@ -71,6 +101,7 @@ class Session:
             else:
                 self.log.warning("conexão com %s interrompida: %s", self.origem, exc)
         finally:
+            self._encerrar_indicador()
             self.close()
             self.log.info("sessão com %s encerrada", self.origem)
 
@@ -83,6 +114,32 @@ class Session:
                 op()
             except OSError:
                 pass
+
+    def _iniciar_indicador(self) -> bool:
+        """Avisa o observador de que a sessão começou, antes de aceitar qualquer comando.
+
+        Se ele falhar (ou demorar demais), a sessão é recusada: sem o indicador visível não
+        pode haver controle remoto (Seção 3). Sem observador, não há nada a avisar.
+        """
+        if self.observador is None:
+            return True
+        try:
+            self.observador.sessao_iniciada(self.origem)
+        except Exception:
+            self.log.exception("indicador visível falhou; sessão de %s recusada", self.origem)
+            return False
+        self._indicador_ativo = True
+        return True
+
+    def _encerrar_indicador(self) -> None:
+        """Avisa o observador de que a sessão terminou, se ele chegou a ser avisado do início."""
+        if not self._indicador_ativo or self.observador is None:
+            return
+        self._indicador_ativo = False
+        try:
+            self.observador.sessao_encerrada()
+        except Exception:
+            self.log.exception("falha ao avisar o indicador visível do encerramento")
 
     def _handshake(self) -> bool:
         """Desafio-resposta. Nenhuma outra ação é aceita antes dele, e quem não
@@ -123,7 +180,8 @@ class Session:
         a sessão.
         """
         self.log.info(
-            "%s -> %s (id=%s) args=%s", self.origem, msg["acao"], msg["id"], _resumo(msg.get("args"))
+            "%s -> %s (id=%s) args=%s",
+            self.origem, msg["acao"], msg["id"], _resumo(_args_para_log(msg["acao"], msg.get("args"))),
         )
         if msg["tipo"] != Tipo.COMANDO:
             resp = make_response(msg, erro="o agente só aceita mensagens do tipo 'comando'")

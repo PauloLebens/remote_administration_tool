@@ -11,6 +11,7 @@ dependencies = [
     "mss>=10.2.0",
     "pillow>=13.0.0",
     "psutil>=6.0.0",
+    "pynput>=1.8.2",
     "pyside6>=6.12.0",
 ]
 

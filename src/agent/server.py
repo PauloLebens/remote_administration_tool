@@ -8,15 +8,19 @@ import threading
 
 from agent.handlers.exec_handler import ExecHandler
 from agent.handlers.files_handler import FileHandlers
+from agent.handlers.input_handler import InputHandlers
 from agent.handlers.sysinfo_handler import handle_sysinfo
-from agent.session import Handler, Session
+from agent.session import Handler, Observador, Session
+from agent.so.entrada import InputBackend
 from shared.config import AgentConfig
 from shared.protocol import Acao
 
 
-def default_handlers(config: AgentConfig) -> dict[str, Handler]:
+def default_handlers(config: AgentConfig, entrada: InputBackend | None = None) -> dict[str, Handler]:
     """Tratadores disponíveis, já com os limites da configuração. Cada etapa nova registra
     suas ações aqui.
+
+    Mouse e teclado só são registrados se houver um `entrada` (backend de injeção).
     """
     handlers: dict[str, Handler] = {
         Acao.ECHO: lambda msg: {"eco": msg.get("args", {})},
@@ -24,6 +28,8 @@ def default_handlers(config: AgentConfig) -> dict[str, Handler]:
         Acao.SYSINFO: handle_sysinfo,
     }
     FileHandlers.de_config(config).registrar(handlers)
+    if entrada is not None:
+        InputHandlers(entrada).registrar(handlers)
     return handlers
 
 
@@ -40,10 +46,16 @@ class AgentServer:
         secret: str,
         handlers: dict[str, Handler] | None = None,
         log: logging.Logger | None = None,
+        observador: Observador | None = None,
+        entrada: InputBackend | None = None,
     ) -> None:
         """`secret` é obrigatório: sem autenticação o agente não sobe, e ele não faz parte da
         configuração (nunca fica em arquivo). `handlers` substitui o conjunto padrão de
         ações. Com `config.porta == 0` o SO escolhe a porta (útil em testes).
+
+        `observador` é o indicador visível. `entrada` é o backend de mouse e teclado, e só
+        vale junto com o `observador`: a entrada remota existe somente dentro de uma sessão
+        visível (Seção 3). Sem indicador, MOUSE_* e KEY nem são registrados.
         """
         if not secret:  # sem autenticação o agente não sobe
             raise ValueError("o agente exige um segredo compartilhado")
@@ -52,7 +64,11 @@ class AgentServer:
         self.auth_timeout = config.auth_timeout
         self.host = config.host
         self.port = config.porta
-        self.handlers = handlers if handlers is not None else default_handlers(config)
+        self.observador = observador
+        self.handlers = (
+            handlers if handlers is not None
+            else default_handlers(config, entrada if observador is not None else None)
+        )
         self.log = log or logging.getLogger("agente")
         self._listener: socket.socket | None = None
         self._session: Session | None = None
@@ -85,7 +101,8 @@ class AgentServer:
                     break
                 conn.settimeout(None)
                 self._session = Session(
-                    conn, addr, self.handlers, self.log, self._secret, self.auth_timeout
+                    conn, addr, self.handlers, self.log, self._secret, self.auth_timeout,
+                    self.observador,
                 )
                 try:
                     self._session.run()
