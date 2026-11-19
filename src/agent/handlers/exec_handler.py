@@ -19,11 +19,9 @@ import threading
 import time
 from typing import Any
 
-log = logging.getLogger("agente.exec")
+from shared.config import AgentConfig
 
-MAX_OUTPUT = 1024 * 1024  # bytes guardados por stream (stdout e stderr, cada um)
-DEFAULT_TIMEOUT = 30.0
-MAX_TIMEOUT = 300.0
+log = logging.getLogger("agente.exec")
 
 
 class _Capture(threading.Thread):
@@ -75,7 +73,7 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def run_command(cmd: str, timeout: float, max_output: int = MAX_OUTPUT) -> dict[str, Any]:
+def run_command(cmd: str, timeout: float, max_output: int) -> dict[str, Any]:
     """Executa `cmd` num shell, com timeout e captura limitada de stdout/stderr, e devolve o
     dicionário de resultado. Ao estourar o prazo mata a árvore inteira de processos.
     """
@@ -118,22 +116,44 @@ def run_command(cmd: str, timeout: float, max_output: int = MAX_OUTPUT) -> dict[
     }
 
 
-def handle_exec(msg: dict[str, Any]) -> dict[str, Any]:
-    """Tratador da ação EXEC (RF2): valida `cmd` e `timeout`, executa e registra o desfecho
-    no log. Argumento inválido levanta ValueError, que vira resposta de erro.
-    """
-    args = msg.get("args") or {}
-    cmd = args.get("cmd")
-    if not isinstance(cmd, str) or not cmd.strip():
-        raise ValueError("'cmd' deve ser um texto não vazio")
-    timeout = args.get("timeout", DEFAULT_TIMEOUT)
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
-        raise ValueError("'timeout' deve ser um número positivo (segundos)")
-    timeout = min(float(timeout), MAX_TIMEOUT)
+class ExecHandler:
+    """Tratador da ação EXEC (RF2) com os limites vindos da configuração do agente.
 
-    resultado = run_command(cmd, timeout)
-    log.info(
-        "EXEC terminou: codigo=%s expirou=%s truncado=%s tempo=%.2fs",
-        resultado["codigo"], resultado["expirou"], resultado["truncado"], resultado["tempo_s"],
-    )
-    return resultado
+    Existe como classe para receber os limites pelo construtor em vez de ler constantes
+    de módulo: assim a configuração do usuário vale, e os testes podem injetar valores.
+    """
+
+    def __init__(self, timeout_padrao: float, timeout_max: float, saida_max: int) -> None:
+        """`timeout_padrao` vale quando o pedido não diz; `timeout_max` é o teto absoluto;
+        `saida_max` é o máximo de bytes guardados em cada um de stdout e stderr.
+        """
+        self.timeout_padrao = timeout_padrao
+        self.timeout_max = timeout_max
+        self.saida_max = saida_max
+
+    @classmethod
+    def de_config(cls, config: AgentConfig) -> ExecHandler:
+        """Cria o tratador com os limites `exec_*` da configuração do agente."""
+        return cls(config.exec_timeout_padrao, config.exec_timeout_max, config.exec_saida_max)
+
+    def handle(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Valida `cmd` e `timeout`, executa e registra o desfecho no log.
+
+        Argumento inválido levanta ValueError, que vira resposta de erro. Um timeout
+        pedido acima do teto é reduzido ao teto, sem erro.
+        """
+        args = msg.get("args") or {}
+        cmd = args.get("cmd")
+        if not isinstance(cmd, str) or not cmd.strip():
+            raise ValueError("'cmd' deve ser um texto não vazio")
+        timeout = args.get("timeout", self.timeout_padrao)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+            raise ValueError("'timeout' deve ser um número positivo (segundos)")
+        timeout = min(float(timeout), self.timeout_max)
+
+        resultado = run_command(cmd, timeout, self.saida_max)
+        log.info(
+            "EXEC terminou: codigo=%s expirou=%s truncado=%s tempo=%.2fs",
+            resultado["codigo"], resultado["expirou"], resultado["truncado"], resultado["tempo_s"],
+        )
+        return resultado

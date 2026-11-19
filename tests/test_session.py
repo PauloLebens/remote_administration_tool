@@ -9,6 +9,7 @@ import unittest
 from agent.server import AgentServer
 from controller.connection import EVENTO_DESCONECTADO, AuthError, Connection
 from shared.auth import compute_proof
+from shared.config import AgentConfig
 from shared.protocol import Acao, make_command
 from shared.receiver import recv_msg
 from shared.sender import send_msg
@@ -30,7 +31,7 @@ class ServerCase(unittest.TestCase):
     auth_timeout = 10.0
 
     def setUp(self):
-        self.server = AgentServer("127.0.0.1", 0, secret=SECRET, auth_timeout=self.auth_timeout)
+        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0, auth_timeout=self.auth_timeout), secret=SECRET)
         self.server.open()
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -166,7 +167,7 @@ class AuthTests(ServerCase):
 
     def test_agente_exige_segredo(self):
         with self.assertRaises(ValueError):
-            AgentServer("127.0.0.1", 0, secret="")
+            AgentServer(AgentConfig(host="127.0.0.1", porta=0), secret="")
 
 
 if __name__ == "__main__":

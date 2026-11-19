@@ -6,23 +6,24 @@ import logging
 import socket
 import threading
 
-from agent.handlers.exec_handler import handle_exec
+from agent.handlers.exec_handler import ExecHandler
 from agent.handlers.files_handler import FileHandlers
 from agent.handlers.sysinfo_handler import handle_sysinfo
 from agent.session import Handler, Session
-from shared.protocol import DEFAULT_PORT, Acao
+from shared.config import AgentConfig
+from shared.protocol import Acao
 
 
-def default_handlers(raiz: str | None = None) -> dict[str, Handler]:
-    """Tratadores disponíveis. Cada etapa nova registra suas ações aqui.
-
-    `raiz` restringe LS/GET/PUT a um diretório (opcional)."""
+def default_handlers(config: AgentConfig) -> dict[str, Handler]:
+    """Tratadores disponíveis, já com os limites da configuração. Cada etapa nova registra
+    suas ações aqui.
+    """
     handlers: dict[str, Handler] = {
         Acao.ECHO: lambda msg: {"eco": msg.get("args", {})},
-        Acao.EXEC: handle_exec,
+        Acao.EXEC: ExecHandler.de_config(config).handle,
         Acao.SYSINFO: handle_sysinfo,
     }
-    FileHandlers(raiz).registrar(handlers)
+    FileHandlers.de_config(config).registrar(handlers)
     return handlers
 
 
@@ -34,26 +35,24 @@ class AgentServer:
     """
     def __init__(
         self,
-        host: str = "0.0.0.0",
-        port: int = DEFAULT_PORT,
+        config: AgentConfig,
         *,
         secret: str,
         handlers: dict[str, Handler] | None = None,
         log: logging.Logger | None = None,
-        auth_timeout: float = 10.0,
-        raiz: str | None = None,
     ) -> None:
-        """`secret` é obrigatório: sem autenticação o agente não sobe. `handlers` substitui o
-        conjunto padrão de ações; `raiz` restringe LS/GET/PUT e só vale com os tratadores
-        padrão. `port=0` deixa o SO escolher a porta (útil em testes).
+        """`secret` é obrigatório: sem autenticação o agente não sobe, e ele não faz parte da
+        configuração (nunca fica em arquivo). `handlers` substitui o conjunto padrão de
+        ações. Com `config.porta == 0` o SO escolhe a porta (útil em testes).
         """
         if not secret:  # sem autenticação o agente não sobe
             raise ValueError("o agente exige um segredo compartilhado")
         self._secret = secret
-        self.auth_timeout = auth_timeout
-        self.host = host
-        self.port = port
-        self.handlers = handlers if handlers is not None else default_handlers(raiz)
+        self.config = config
+        self.auth_timeout = config.auth_timeout
+        self.host = config.host
+        self.port = config.porta
+        self.handlers = handlers if handlers is not None else default_handlers(config)
         self.log = log or logging.getLogger("agente")
         self._listener: socket.socket | None = None
         self._session: Session | None = None

@@ -7,19 +7,22 @@ import threading
 import time
 import unittest
 
-from agent.handlers import exec_handler
-from agent.handlers.exec_handler import handle_exec, run_command
+from agent.handlers.exec_handler import ExecHandler, run_command
 from agent.handlers.sysinfo_handler import get_sysinfo
 from agent.server import AgentServer
 from controller.connection import Connection
+from shared.config import AgentConfig
 from shared.protocol import Acao, make_command
 
 POSIX = os.name != "nt"
 PY = f'"{sys.executable}"'
 
 
+EXEC = ExecHandler.de_config(AgentConfig())
+
+
 def exec_(cmd, **args):
-    return handle_exec(make_command(Acao.EXEC, {"cmd": cmd, **args}))
+    return EXEC.handle(make_command(Acao.EXEC, {"cmd": cmd, **args}))
 
 
 class ExecTests(unittest.TestCase):
@@ -81,18 +84,29 @@ class ExecTests(unittest.TestCase):
         for args in ({}, {"cmd": ""}, {"cmd": "  "}, {"cmd": 5}, {"cmd": "echo"} | {"timeout": 0},
                      {"cmd": "echo", "timeout": "10"}, {"cmd": "echo", "timeout": True}):
             with self.assertRaises(ValueError, msg=args):
-                handle_exec(make_command(Acao.EXEC, args))
+                EXEC.handle(make_command(Acao.EXEC, args))
 
-    def test_timeout_e_limitado_ao_maximo(self):
-        visto = {}
-        original = exec_handler.run_command
-        exec_handler.run_command = lambda cmd, timeout, **kw: visto.update(t=timeout) or {
-            "codigo": 0, "expirou": False, "truncado": False, "tempo_s": 0}
-        try:
-            exec_("echo", timeout=99999)
-        finally:
-            exec_handler.run_command = original
-        self.assertEqual(visto["t"], exec_handler.MAX_TIMEOUT)
+    def _dorme(self):
+        return f'{PY} -c "import time; time.sleep(30)"'
+
+    def test_timeout_pedido_e_limitado_ao_teto_da_config(self):
+        h = ExecHandler.de_config(AgentConfig(exec_timeout_padrao=0.5, exec_timeout_max=1.0))
+        t0 = time.monotonic()
+        r = h.handle(make_command(Acao.EXEC, {"cmd": self._dorme(), "timeout": 99999}))
+        self.assertTrue(r["expirou"])
+        self.assertLess(time.monotonic() - t0, 4)  # parou no teto (1 s), não em 99999 s
+
+    def test_timeout_padrao_vem_da_config(self):
+        h = ExecHandler.de_config(AgentConfig(exec_timeout_padrao=0.5, exec_timeout_max=1.0))
+        t0 = time.monotonic()
+        r = h.handle(make_command(Acao.EXEC, {"cmd": self._dorme()}))  # o pedido não diz o prazo
+        self.assertTrue(r["expirou"])
+        self.assertLess(time.monotonic() - t0, 4)
+
+    def test_limite_de_saida_vem_da_config(self):
+        h = ExecHandler.de_config(AgentConfig(exec_saida_max=1024))
+        r = h.handle(make_command(Acao.EXEC, {"cmd": f"{PY} -c \"print('x' * 5000)\""}))
+        self.assertEqual((len(r["stdout"]), r["truncado"]), (1024, True))
 
 
 class SysinfoTests(unittest.TestCase):
@@ -116,7 +130,7 @@ class ViaRedeTests(unittest.TestCase):
     """Do controlador ao agente, passando por handshake, framing e log."""
 
     def setUp(self):
-        self.server = AgentServer("127.0.0.1", 0, secret="segredo-de-teste")
+        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0), secret="segredo-de-teste")
         self.server.open()
         self.t = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.t.start()

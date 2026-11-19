@@ -47,7 +47,7 @@ def download(
     *,
     sobrescrever: bool = False,
     progresso: Progresso | None = None,
-    timeout: float = 30.0,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     """Baixa `remoto` (no agente) para `local`, verificando o SHA-256."""
     local = Path(local)
@@ -110,7 +110,7 @@ def upload(
     *,
     sobrescrever: bool = False,
     progresso: Progresso | None = None,
-    timeout: float = 30.0,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     """Envia `local` para `remoto` (no agente); o agente verifica o SHA-256."""
     local = Path(local)

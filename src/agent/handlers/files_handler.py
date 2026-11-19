@@ -34,11 +34,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from shared.config import AgentConfig
 from shared.protocol import CHUNK_SIZE, Acao
 
 log = logging.getLogger("agente.arquivos")
 
-MAX_ENTRADAS = 5000  # uma listagem maior é cortada (e marcada como truncada)
 HASH_BLOCO = 1024 * 1024
 
 
@@ -82,9 +82,17 @@ class FileHandlers:
     Existe como classe porque os três compartilham a raiz e a resolução de caminhos.
     A raiz limita arquivos, não execução: ela não restringe o EXEC.
     """
-    def __init__(self, raiz: str | Path | None = None) -> None:
-        """`raiz`, se informada, limita todos os caminhos a esse diretório."""
+    def __init__(self, raiz: str | Path | None, max_entradas: int) -> None:
+        """`raiz`, se informada, limita todos os caminhos a esse diretório. `max_entradas` é
+        o tamanho máximo de uma listagem (acima disso ela é cortada e marcada `truncado`).
+        """
         self.raiz = Path(raiz).resolve() if raiz else None
+        self.max_entradas = max_entradas
+
+    @classmethod
+    def de_config(cls, config: AgentConfig) -> FileHandlers:
+        """Cria o tratador com `raiz` e `ls_max_entradas` da configuração do agente."""
+        return cls(config.raiz, config.ls_max_entradas)
 
     def registrar(self, handlers: dict[str, Any]) -> None:
         """Registra LS, GET e PUT no dicionário de tratadores do servidor."""
@@ -176,7 +184,7 @@ class FileHandlers:
         truncado = False
         with os.scandir(p) as it:
             for e in it:
-                if len(entradas) >= MAX_ENTRADAS:
+                if len(entradas) >= self.max_entradas:
                     truncado = True
                     break
                 entradas.append(self._atributos(e.name, e.path, e))

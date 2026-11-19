@@ -9,11 +9,11 @@ import time
 import unittest
 from pathlib import Path
 
-from agent.handlers import files_handler
 from agent.handlers.files_handler import FileHandlers
 from agent.server import AgentServer
 from controller.connection import Connection
 from controller.controller import executar
+from shared.config import AgentConfig, ControllerConfig
 from controller.transfer import IntegrityError, TransferError, download, upload
 from shared.protocol import CHUNK_SIZE, Acao, make_command
 
@@ -41,7 +41,7 @@ class Pasta(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self._tmp.name).resolve()
-        self.fh = FileHandlers(self.dir if self.raiz else None)
+        self.fh = FileHandlers.de_config(AgentConfig(raiz=str(self.dir) if self.raiz else None))
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -80,11 +80,8 @@ class LsTests(Pasta):
     def test_listagem_enorme_e_cortada(self):
         for i in range(5):
             self.arq(f"f{i}")
-        original, files_handler.MAX_ENTRADAS = files_handler.MAX_ENTRADAS, 3
-        try:
-            r = self.fh.ls(msg(Acao.LS, caminho=str(self.dir)))
-        finally:
-            files_handler.MAX_ENTRADAS = original
+        fh = FileHandlers.de_config(AgentConfig(ls_max_entradas=3))  # limite vem da configuração
+        r = fh.ls(msg(Acao.LS, caminho=str(self.dir)))
         self.assertEqual((len(r["entradas"]), r["truncado"]), (3, True))
 
     @unittest.skipUnless(POSIX, "links simbólicos")
@@ -280,7 +277,7 @@ class ViaRede(unittest.TestCase):
         self.local = self.dir / "controlador"
         self.agente.mkdir()
         self.local.mkdir()
-        self.server = AgentServer("127.0.0.1", 0, secret=SECRET, raiz=str(self.agente))
+        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0, raiz=str(self.agente)), secret=SECRET)
         self.server.open()
         self.t = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.t.start()
@@ -403,9 +400,17 @@ class ViaRede(unittest.TestCase):
             os.chdir("/")
 
 
+    def test_get_sem_destino_usa_a_pasta_de_downloads_da_config(self):
+        (self.agente / "oi.txt").write_bytes(b"ola")
+        pasta = self.local / "baixados" / "fundo"  # ainda não existe: deve ser criada
+        cfg = ControllerConfig(pasta_downloads=str(pasta))
+        self.assertIn("conferido", executar(self.conn, "get oi.txt", config=cfg))
+        self.assertEqual((pasta / "oi.txt").read_bytes(), b"ola")
+
+
 class RequestTests(unittest.TestCase):
     def setUp(self):
-        self.server = AgentServer("127.0.0.1", 0, secret=SECRET)
+        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0), secret=SECRET)
         self.server.handlers["LENTO"] = lambda m: time.sleep(m["args"]["s"]) or "pronto"
         self.server.open()
         self.t = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -445,6 +450,15 @@ class RequestTests(unittest.TestCase):
             self.conn.request("LENTO", {"s": 0.6}, timeout=0.2)
         time.sleep(0.8)  # a resposta tardia cai na fila e não quebra nada
         self.assertEqual(self.conn.request(Acao.ECHO)["status"], "ok")
+
+    def test_timeout_padrao_vem_da_config(self):
+        self.conn.close()  # o agente atende um controlador por vez: libera o lugar
+        with Connection("127.0.0.1", self.server.port, secret=SECRET,
+                        config=ControllerConfig(timeout_requisicao=0.2)) as c:
+            c.connect()
+            with self.assertRaises(TimeoutError):
+                c.request("LENTO", {"s": 0.6})  # sem timeout: vale o da configuração
+            time.sleep(0.6)  # deixa a resposta tardia chegar antes do fechamento
 
     def test_conexao_cai_com_request_pendente(self):
         resultado = []

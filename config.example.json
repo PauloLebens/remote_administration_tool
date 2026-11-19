@@ -1,0 +1,22 @@
+{
+  "agente": {
+    "host": "0.0.0.0",
+    "porta": 5000,
+    "raiz": null,
+    "arquivo_log": "logs/agente.log",
+    "auth_timeout": 10.0,
+    "exec_timeout_padrao": 30.0,
+    "exec_timeout_max": 300.0,
+    "exec_saida_max": 1048576,
+    "ls_max_entradas": 5000
+  },
+  "controlador": {
+    "host": "127.0.0.1",
+    "porta": 5000,
+    "arquivo_log": "logs/controlador.log",
+    "timeout_conexao": 5.0,
+    "timeout_requisicao": 30.0,
+    "timeout_exec": 330.0,
+    "pasta_downloads": "."
+  }
+}

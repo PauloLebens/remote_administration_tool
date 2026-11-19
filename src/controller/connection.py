@@ -19,6 +19,7 @@ import threading
 from typing import Any
 
 from shared.auth import compute_proof
+from shared.config import ControllerConfig
 from shared.protocol import (
     DEFAULT_PORT, Acao, ProtocolError, Status, Tipo, make_command, make_event, validate,
 )
@@ -48,11 +49,14 @@ class Connection:
         *,
         secret: str,
         log: logging.Logger | None = None,
+        config: ControllerConfig | None = None,
     ) -> None:
-        """`secret` é o segredo compartilhado do handshake. Só prepara o objeto; a rede só é
-        usada em connect().
+        """`secret` é o segredo compartilhado do handshake. `config` fornece os tempos limite
+        padrão (conexão e requisição); sem ela valem os padrões de ControllerConfig. Só
+        prepara o objeto: a rede só é usada em connect().
         """
         self._secret = secret
+        self.config = config or ControllerConfig()
         self.host = host
         self.port = port
         self.log = log or logging.getLogger("controlador")
@@ -71,8 +75,10 @@ class Connection:
         """True enquanto a conexão está aberta e nenhum dos lados a encerrou."""
         return self._sock is not None and not self._closed.is_set()
 
-    def connect(self, timeout: float = 5.0) -> None:
-        """Conecta e autentica (levanta OSError ou AuthError se falhar) e inicia as threads."""
+    def connect(self, timeout: float | None = None) -> None:
+        """Conecta e autentica (levanta OSError ou AuthError se falhar) e inicia as threads.
+        Sem `timeout`, vale `timeout_conexao` da configuração."""
+        timeout = self.config.timeout_conexao if timeout is None else timeout
         self.log.info("conectando a %s:%d", self.host, self.port)
         sock = socket.create_connection((self.host, self.port), timeout=timeout)
         try:
@@ -121,13 +127,14 @@ class Connection:
         return cmd["id"]
 
     def request(
-        self, acao: str, args: dict[str, Any] | None = None, timeout: float = 30.0
+        self, acao: str, args: dict[str, Any] | None = None, timeout: float | None = None
     ) -> dict[str, Any]:
         """Envia um comando e espera a resposta com o mesmo id.
 
-        Levanta TimeoutError se o agente não responder a tempo e ConnectionError
-        se a conexão cair. Não chame da thread de leitura (ela é quem entrega).
+        Sem `timeout`, vale `timeout_requisicao` da configuração. Levanta TimeoutError se
+        o agente não responder a tempo e ConnectionError se a conexão cair. Não chame da thread de leitura (ela é quem entrega).
         """
+        timeout = self.config.timeout_requisicao if timeout is None else timeout
         cmd = make_command(acao, args)
         espera: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=1)
         with self._pending_lock:

@@ -16,8 +16,9 @@ from typing import Any
 from controller.connection import EVENTO_DESCONECTADO, AuthError, Connection
 from controller.transfer import TransferError, download, upload
 from shared.auth import get_secret
+from shared.config import ConfigError, ControllerConfig
 from shared.log import setup_logging
-from shared.protocol import DEFAULT_PORT, Acao, Status
+from shared.protocol import Acao, Status
 
 AJUDA = """\
   info                       informações do sistema do agente
@@ -78,12 +79,16 @@ def formatar_ls(r: dict[str, Any]) -> str:
     return "\n".join(linhas)
 
 
-def executar(conn: Connection, linha: str, progresso=None) -> str:
+def executar(
+    conn: Connection, linha: str, progresso=None, config: ControllerConfig | None = None
+) -> str:
     """Executa uma linha de comando do operador e devolve o texto a mostrar.
 
-    Levanta TransferError/TimeoutError/ConnectionError/OSError em caso de falha;
-    quem chama decide como exibir.
+    `config` define o timeout do `exec` e a pasta de destino padrão do `get`. Levanta
+    TransferError/TimeoutError/ConnectionError/OSError em caso de falha; quem chama
+    decide como exibir.
     """
+    config = config or ControllerConfig()
     partes = linha.strip().split(None, 1)
     if not partes:
         return ""
@@ -98,7 +103,7 @@ def executar(conn: Connection, linha: str, progresso=None) -> str:
     if cmd == "exec":
         if not resto:
             return "uso: exec <comando>"
-        r = _resultado(conn.request(Acao.EXEC, {"cmd": resto}, timeout=330))
+        r = _resultado(conn.request(Acao.EXEC, {"cmd": resto}, timeout=config.timeout_exec))
         saida = r["stdout"] + (f"[stderr]\n{r['stderr']}" if r["stderr"] else "")
         notas = [f"código de saída: {r['codigo']}", f"{r['tempo_s']}s"]
         if r["expirou"]:
@@ -116,19 +121,26 @@ def executar(conn: Connection, linha: str, progresso=None) -> str:
         if not 1 <= len(args) <= 2:
             return f"uso: {cmd} <{'remoto' if cmd == 'get' else 'local'}> [{'local' if cmd == 'get' else 'remoto'}]"
         if cmd == "get":
-            r = download(conn, args[0], args[1] if len(args) > 1 else Path(args[0]).name, progresso=progresso)
+            if len(args) > 1:
+                destino = Path(args[1])
+            else:  # sem caminho local: vai para a pasta de downloads da configuração
+                pasta = Path(config.pasta_downloads)
+                pasta.mkdir(parents=True, exist_ok=True)
+                destino = pasta / Path(args[0]).name
+            r = download(conn, args[0], destino, progresso=progresso)
             return f"baixado: {r['caminho']} ({_tamanho(r['tamanho'])}, sha256 {r['sha256'][:16]}… conferido)"
         r = upload(conn, args[0], args[1] if len(args) > 1 else Path(args[0]).name, progresso=progresso)
         return f"enviado: {r['caminho']} ({_tamanho(r['tamanho'])}, sha256 {r['sha256'][:16]}… conferido)"
     return f"comando desconhecido: {cmd} (digite 'ajuda')"
 
 
-def run_controller(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
+def run_controller(config: ControllerConfig) -> None:
     """Laço interativo da CLI: conecta, autentica e lê comandos do operador até 'sair' ou a
     conexão cair.
     """
-    log = setup_logging("controlador", "logs/controlador.log")
-    conn = Connection(host, port, secret=get_secret(), log=log)
+    log = setup_logging("controlador", config.arquivo_log)
+    host, port = config.host, config.porta
+    conn = Connection(host, port, secret=get_secret(), log=log, config=config)
     try:
         conn.connect()
     except AuthError as exc:
@@ -172,7 +184,7 @@ def run_controller(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
             if done.is_set() or linha.strip().lower() == "sair":
                 break
             try:
-                saida = executar(conn, linha, progresso)
+                saida = executar(conn, linha, progresso, config)
                 if mostrou_progresso:  # termina a linha da barra de progresso
                     print(file=sys.stderr)
                     mostrou_progresso.clear()
@@ -187,9 +199,21 @@ def run_controller(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
         conn.close()
 
 
-if __name__ == "__main__":
+def _config_da_linha_de_comando(argv: list[str] | None = None) -> ControllerConfig:
+    """Monta a configuração: padrões, depois o arquivo, depois os argumentos informados.
+
+    Sai com mensagem clara (sem traceback) se algo estiver inválido.
+    """
     ap = argparse.ArgumentParser(description="Controlador de administração remota")
-    ap.add_argument("--host", default="127.0.0.1", help="endereço do agente")
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    args = ap.parse_args()
-    run_controller(args.host, args.port)
+    ap.add_argument("--config", help="arquivo JSON de configuração (padrão: ./config.json se existir)")
+    ap.add_argument("--host", help="endereço do agente")
+    ap.add_argument("--port", type=int, help="porta do agente")
+    args = ap.parse_args(argv)
+    try:
+        return ControllerConfig.carregar(args.config).com(host=args.host, porta=args.port)
+    except ConfigError as exc:
+        sys.exit(f"configuração inválida: {exc}")
+
+
+if __name__ == "__main__":
+    run_controller(_config_da_linha_de_comando())
