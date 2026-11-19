@@ -29,6 +29,7 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
+from shared.fingerprint import normalizar
 from shared.protocol import DEFAULT_PORT
 
 CONFIG_PADRAO = "config.json"
@@ -162,6 +163,8 @@ class AgentConfig(_Config):
     porta: int = _campo("int", DEFAULT_PORT, 0, 65535)  # 0 = o SO escolhe (útil em testes)
     raiz: str | None = _campo("txt?", None)  # restringe LS/GET/PUT (não o EXEC)
     arquivo_log: str = _campo("txt", "logs/agente.log")
+    certificado: str = _campo("txt", "certs/agente.crt")  # gerado na 1ª execução se não existir
+    chave: str = _campo("txt", "certs/agente.key")  # chave PRIVADA do certificado: nunca compartilhe
     auth_timeout: float = _campo("num", 10.0, 0.1, 120.0)  # prazo para concluir o handshake
     exec_timeout_padrao: float = _campo("num", 30.0, 0.1, 3600.0)  # se o pedido não disser
     exec_timeout_max: float = _campo("num", 300.0, 0.1, 3600.0)  # teto, mesmo se o pedido pedir mais
@@ -190,3 +193,13 @@ class ControllerConfig(_Config):
     timeout_requisicao: float = _campo("num", 30.0, 0.1, 3600.0)  # um comando comum ou um bloco
     timeout_exec: float = _campo("num", 330.0, 0.1, 7200.0)  # deve passar de exec_timeout_max do agente
     pasta_downloads: str = _campo("txt", ".")  # destino padrão do `get` sem caminho local
+    arquivo_agentes_conhecidos: str = _campo("txt", "agentes_conhecidos.json")  # identidades já confirmadas
+    fingerprint_agente: str | None = _campo("txt?", None)  # se informada, só este agente é aceito
+
+    def _validar_cruzado(self) -> None:
+        """A impressão digital informada precisa ser um SHA-256 completo e bem formado."""
+        if self.fingerprint_agente is not None:
+            try:
+                normalizar(self.fingerprint_agente)
+            except ValueError as exc:
+                raise ConfigError(f"'fingerprint_agente': {exc}") from exc

@@ -15,9 +15,11 @@ from __future__ import annotations
 import logging
 import queue
 import socket
+import ssl
 import threading
 from typing import Any
 
+from controller.confianca import Verificador
 from shared.auth import compute_proof
 from shared.config import ControllerConfig
 from shared.protocol import (
@@ -25,6 +27,7 @@ from shared.protocol import (
 )
 from shared.receiver import recv_msg
 from shared.sender import send_msg
+from shared.tls import contexto_cliente, fingerprint_do_par
 
 # Evento local (não vem do agente) colocado em `incoming` quando a conexão acaba.
 EVENTO_DESCONECTADO = "DESCONECTADO"
@@ -48,14 +51,18 @@ class Connection:
         port: int = DEFAULT_PORT,
         *,
         secret: str,
+        verificador: Verificador,
         log: logging.Logger | None = None,
         config: ControllerConfig | None = None,
     ) -> None:
-        """`secret` é o segredo compartilhado do handshake. `config` fornece os tempos limite
+        """`secret` é o segredo compartilhado do handshake. `verificador` decide se a identidade
+        (impressão digital do certificado) do agente é aceita: é obrigatório, porque sem ele
+        o TLS cifraria a conversa com um agente qualquer, inclusive um falso. `config` fornece os tempos limite
         padrão (conexão e requisição); sem ela valem os padrões de ControllerConfig. Só
         prepara o objeto: a rede só é usada em connect().
         """
         self._secret = secret
+        self._verificador = verificador
         self.config = config or ControllerConfig()
         self.host = host
         self.port = port
@@ -82,6 +89,7 @@ class Connection:
         self.log.info("conectando a %s:%d", self.host, self.port)
         sock = socket.create_connection((self.host, self.port), timeout=timeout)
         try:
+            sock = self._negociar_tls(sock)
             self._authenticate(sock)
         except BaseException:
             sock.close()
@@ -95,6 +103,26 @@ class Connection:
         for t in self._threads:
             t.start()
         self.log.info("conectado a %s:%d", self.host, self.port)
+
+    def _negociar_tls(self, sock: socket.socket) -> ssl.SSLSocket:
+        """Cifra a conexão (TLS 1.3) e confere a identidade do agente ANTES de qualquer outra
+        coisa, inclusive da autenticação por segredo.
+
+        O contexto do cliente não valida cadeia nem nome; a garantia vem de `verificar`, que
+        compara a impressão digital do certificado e levanta IdentidadeRecusada se não confiar.
+        """
+        try:
+            cifrado = contexto_cliente().wrap_socket(sock, server_hostname=self.host)
+        except ssl.SSLError as exc:
+            raise ConnectionError(f"falha no handshake TLS com {self.host}:{self.port}: {exc}") from exc
+        try:
+            fingerprint = fingerprint_do_par(cifrado)
+            self._verificador.verificar(self.host, self.port, fingerprint)
+        except BaseException:
+            cifrado.close()
+            raise
+        self.log.info("canal %s; identidade do agente confirmada: %s", cifrado.version(), fingerprint)
+        return cifrado
 
     def _authenticate(self, sock: socket.socket) -> None:
         """Handshake síncrono, antes de existirem as threads (ver shared/auth.py)."""

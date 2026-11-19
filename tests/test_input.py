@@ -14,6 +14,7 @@ from controller.controller import executar
 from controller.transfer import TransferError
 from shared.config import AgentConfig
 from shared.protocol import Acao, make_command
+from tls_helper import CONTEXTO, verificador
 
 SECRET = "segredo-de-teste"
 
@@ -268,6 +269,7 @@ class ServidorCase(unittest.TestCase):
         self.server = AgentServer(
             AgentConfig(host="127.0.0.1", porta=0),
             secret=SECRET,
+            contexto_tls=CONTEXTO,
             observador=self.obs if self.com_observador else None,
             entrada=self.be if self.com_entrada else None,
         )
@@ -280,7 +282,7 @@ class ServidorCase(unittest.TestCase):
         self.t.join(5)
 
     def conecta(self):
-        c = Connection("127.0.0.1", self.server.port, secret=SECRET)
+        c = Connection("127.0.0.1", self.server.port, secret=SECRET, verificador=verificador())
         c.connect()
         self.addCleanup(c.close)
         return c
@@ -322,7 +324,7 @@ class ObservadorTests(ServidorCase):
         self.assertEqual(self.eventos.count(("encerrada",)), 1)
 
     def test_falha_de_autenticacao_nao_acende_o_indicador(self):
-        c = Connection("127.0.0.1", self.server.port, secret="segredo-errado-9")
+        c = Connection("127.0.0.1", self.server.port, secret="segredo-errado-9", verificador=verificador())
         with self.assertRaises(ConnectionError):
             c.connect()
         self.assertEqual(self.eventos, [])  # ninguém foi autenticado, nada a mostrar

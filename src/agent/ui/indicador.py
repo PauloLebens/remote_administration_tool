@@ -26,6 +26,19 @@ _ESTILO_OCIOSO = "QWidget { background: #37474f; color: white; }" + _ESTILO_BASE
 _ESTILO_CONTROLADO = "QWidget { background: #b00020; color: white; }" + _ESTILO_BASE
 
 
+def _em_duas_linhas(fingerprint: str) -> str:
+    """Quebra a impressão digital ao meio, para ela caber inteira na janela.
+
+    Importa porque o operador a CONFERE: o Qt não quebra linha nos dois-pontos, e uma
+    impressão digital cortada na borda da janela levaria a confirmar só o começo dela. Sem
+    espaços nem outro caractere novo: tirando as quebras de linha, o texto é o original.
+    """
+    partes = fingerprint.split(":")  # ["SHA256", "AB", "CD", ...]: prefixo + 32 octetos
+    if len(partes) != 33:
+        return fingerprint
+    return ":".join(partes[:17]) + ":\n" + ":".join(partes[17:])
+
+
 class JanelaIndicador(QWidget):
     """Janela do agente: mostra o estado e oferece o kill switch.
 
@@ -62,12 +75,21 @@ class JanelaIndicador(QWidget):
         self.rotulo_controlador = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
         self.rotulo_aviso = QLabel(alignment=Qt.AlignmentFlag.AlignCenter, wordWrap=True)
         self.rotulo_aviso.hide()
+        # Endereços e impressão digital: o operador do controlador confere esta tela.
+        self.rotulo_identidade = QLabel(alignment=Qt.AlignmentFlag.AlignCenter, wordWrap=True)
+        self.rotulo_identidade.setStyleSheet("font-size: 11px; font-family: Menlo, Consolas, monospace;")
+        self.rotulo_identidade.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.rotulo_identidade.hide()
+        self.rotulo_atalho = QLabel(alignment=Qt.AlignmentFlag.AlignCenter, wordWrap=True)
+        self.rotulo_atalho.setStyleSheet("font-size: 11px;")
+        self.rotulo_atalho.hide()
         self.botao_encerrar = QPushButton(f"Encerrar sessão e sair  ({ATALHO_ENCERRAR})")
         self.botao_encerrar.clicked.connect(self.encerrar)
         QShortcut(QKeySequence(ATALHO_ENCERRAR), self, activated=self.encerrar)
 
         layout = QVBoxLayout(self)
-        for w in (self.rotulo_estado, self.rotulo_controlador, self.rotulo_aviso, self.botao_encerrar):
+        for w in (self.rotulo_estado, self.rotulo_controlador, self.rotulo_identidade,
+                  self.rotulo_atalho, self.rotulo_aviso, self.botao_encerrar):
             layout.addWidget(w)
 
         self._sessao_encerrada.connect(self._mostrar_ocioso, Qt.ConnectionType.QueuedConnection)
@@ -100,6 +122,24 @@ class JanelaIndicador(QWidget):
         """Mostra uma nota fixa na janela (ex.: falta de permissão de Acessibilidade)."""
         self.rotulo_aviso.setText(f"⚠ {texto}")
         self.rotulo_aviso.show()
+
+    def mostrar_identidade(self, enderecos: list[str], porta: int, fingerprint: str) -> None:
+        """Mostra por onde conectar e a impressão digital (SHA-256) do certificado do agente.
+
+        É a informação que o operador do controlador confere na primeira conexão (como a
+        chave de host do SSH). Fica visível nos dois estados, porque é consultada antes de
+        existir qualquer controlador conectado.
+        """
+        onde = ", ".join(f"{ip}:{porta}" for ip in enderecos) or f"porta {porta}"
+        self.rotulo_identidade.setText(
+            f"Conecte em: {onde}\nImpressão digital (SHA-256) deste agente:\n{_em_duas_linhas(fingerprint)}"
+        )
+        self.rotulo_identidade.show()
+
+    def mostrar_atalho_global(self, descricao: str) -> None:
+        """Informa o atalho de emergência que funciona mesmo com esta janela fora de foco."""
+        self.rotulo_atalho.setText(f"Atalho de emergência (global): {descricao}")
+        self.rotulo_atalho.show()
 
     def _mostrar_controlado(self, origem: str) -> None:
         """Estado 'sob controle remoto': aviso exigido pela Seção 3 e endereço do controlador."""

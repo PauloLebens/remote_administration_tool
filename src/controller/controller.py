@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from controller.confianca import AgentesConhecidos, IdentidadeRecusada, Verificador, VerificadorFixo
 from controller.connection import EVENTO_DESCONECTADO, AuthError, Connection
 from controller.transfer import TransferError, download, upload
 from shared.auth import get_secret
@@ -194,16 +195,50 @@ def executar(
     return f"comando desconhecido: {cmd} (digite 'ajuda')"
 
 
+def _perguntar_no_terminal(host: str, porta: int, fingerprint: str) -> bool:
+    """Primeira conexão com este agente: mostra a impressão digital e pede a confirmação.
+
+    O operador deve comparar com a que aparece NA JANELA DO AGENTE. Só 's' ou 'sim' confirma;
+    qualquer outra resposta (ou Enter) recusa, e sem terminal a resposta é sempre 'não'.
+    """
+    print(f"\nPrimeira conexão com {host}:{porta}.")
+    print("Impressão digital (SHA-256) apresentada pelo agente:")
+    print(f"  {fingerprint}")
+    print("Confira se é IGUAL à que aparece na janela do agente. Se for diferente, não confie.")
+    try:
+        resposta = input("Confiar neste agente e salvar a impressão digital? [s/N] ")
+    except EOFError:
+        return False
+    return resposta.strip().lower() in ("s", "sim")
+
+
+def criar_verificador(config: ControllerConfig) -> Verificador:
+    """Como o controlador decide em quem confiar: impressão digital fixada na configuração, se
+    houver; senão a lista de agentes já confirmados, perguntando pelos desconhecidos.
+    """
+    if config.fingerprint_agente:
+        return VerificadorFixo(config.fingerprint_agente)
+    return AgentesConhecidos(config.arquivo_agentes_conhecidos, _perguntar_no_terminal)
+
+
 def run_controller(config: ControllerConfig) -> None:
     """Laço interativo da CLI: conecta, autentica e lê comandos do operador até 'sair' ou a
     conexão cair.
     """
     log = setup_logging("controlador", config.arquivo_log)
     host, port = config.host, config.porta
-    conn = Connection(host, port, secret=get_secret(), log=log, config=config)
+    conn = Connection(
+        host, port, secret=get_secret(), verificador=criar_verificador(config), log=log, config=config
+    )
     try:
         conn.connect()
+    except IdentidadeRecusada as exc:
+        log.error("conexão recusada, a identidade do agente não foi aceita:\n%s", exc)
+        return
     except AuthError as exc:
+        log.error("%s", exc)
+        return
+    except ConnectionError as exc:  # inclui falha no handshake TLS (agente sem TLS, versão antiga...)
         log.error("%s", exc)
         return
     except OSError as exc:
@@ -268,9 +303,15 @@ def _config_da_linha_de_comando(argv: list[str] | None = None) -> ControllerConf
     ap.add_argument("--config", help="arquivo JSON de configuração (padrão: ./config.json se existir)")
     ap.add_argument("--host", help="endereço do agente")
     ap.add_argument("--port", type=int, help="porta do agente")
+    ap.add_argument(
+        "--fingerprint",
+        help="impressão digital (SHA-256) esperada do agente; só ele será aceito (sem perguntar)",
+    )
     args = ap.parse_args(argv)
     try:
-        return ControllerConfig.carregar(args.config).com(host=args.host, porta=args.port)
+        return ControllerConfig.carregar(args.config).com(
+            host=args.host, porta=args.port, fingerprint_agente=args.fingerprint
+        )
     except ConfigError as exc:
         sys.exit(f"configuração inválida: {exc}")
 

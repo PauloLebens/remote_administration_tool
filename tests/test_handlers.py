@@ -13,6 +13,7 @@ from agent.server import AgentServer
 from controller.connection import Connection
 from shared.config import AgentConfig
 from shared.protocol import Acao, make_command
+from tls_helper import CONTEXTO, verificador
 
 POSIX = os.name != "nt"
 PY = f'"{sys.executable}"'
@@ -130,11 +131,11 @@ class ViaRedeTests(unittest.TestCase):
     """Do controlador ao agente, passando por handshake, framing e log."""
 
     def setUp(self):
-        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0), secret="segredo-de-teste")
+        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0), secret="segredo-de-teste", contexto_tls=CONTEXTO)
         self.server.open()
         self.t = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.t.start()
-        self.conn = Connection("127.0.0.1", self.server.port, secret="segredo-de-teste")
+        self.conn = Connection("127.0.0.1", self.server.port, secret="segredo-de-teste", verificador=verificador())
         self.conn.connect()
 
     def tearDown(self):

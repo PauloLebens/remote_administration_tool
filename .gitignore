@@ -4,3 +4,5 @@ __pycache__
 logs/
 config.json
 segredo.local
+certs/
+agentes_conhecidos.json

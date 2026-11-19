@@ -85,6 +85,58 @@ class TextosTests(JanelaCase):
         self.assertIn("Acessibilidade", self.janela.rotulo_aviso.text())
 
 
+class IdentidadeNaJanelaTests(JanelaCase):
+    FP = "SHA256:" + ":".join(["AB"] * 32)
+
+    def test_comeca_sem_identidade_e_ela_aparece_quando_informada(self):
+        self.assertTrue(self.janela.rotulo_identidade.isHidden())
+        self.janela.mostrar_identidade(["192.168.0.107", "10.148.165.210"], 5055, self.FP)
+        self.assertFalse(self.janela.rotulo_identidade.isHidden())
+        texto = self.janela.rotulo_identidade.text()
+        for trecho in ("Conecte em: 192.168.0.107:5055, 10.148.165.210:5055", "Impressão digital"):
+            self.assertIn(trecho, texto)
+        self.assertIn(self.FP, "".join(texto.split()))  # inteira: só quebras de linha foram acrescentadas
+
+    def test_a_impressao_digital_cabe_inteira_na_janela(self):
+        # Regressão: aparecia cortada na borda, e o operador confirmaria só o começo dela.
+        fp = "SHA256:" + ":".join(["3D", "52", "2B", "7F"] * 8)
+        self.janela.mostrar_identidade(["10.0.0.1"], 5055, fp)
+        self.janela.show()
+        self.janela.adjustSize()
+        bombear()
+        rotulo = self.janela.rotulo_identidade
+        linhas = rotulo.text().split("\n")
+        impressao = [l for l in linhas if ":" in l and "Conecte" not in l and "Impressão" not in l]
+        self.assertEqual(len(impressao), 2)
+        largura = max(rotulo.fontMetrics().horizontalAdvance(l) for l in impressao)
+        self.assertLessEqual(largura, rotulo.width(), "a impressão digital é mais larga que a janela")
+        self.assertEqual("".join(impressao), fp)
+
+    def test_fingerprint_fora_do_formato_nao_e_alterado(self):
+        self.janela.mostrar_identidade(["10.0.0.1"], 5055, "SHA256:AB:CD")
+        self.assertIn("SHA256:AB:CD", self.janela.rotulo_identidade.text())
+
+    def test_sem_endereco_mostra_so_a_porta(self):
+        self.janela.mostrar_identidade([], 5055, self.FP)
+        self.assertIn("Conecte em: porta 5055", self.janela.rotulo_identidade.text())
+
+    def test_a_identidade_continua_visivel_durante_o_controle(self):
+        self.janela.mostrar_identidade(["10.0.0.1"], 5055, self.FP)
+        self.janela.sessao_iniciada("1.2.3.4:5")
+        self.assertFalse(self.janela.rotulo_identidade.isHidden())
+        self.assertEqual(self.texto(), TEXTO_CONTROLADO)  # e o aviso exigido segue intacto
+
+    def test_a_impressao_digital_pode_ser_selecionada_para_copiar(self):
+        flags = self.janela.rotulo_identidade.textInteractionFlags()
+        self.assertTrue(flags & Qt.TextInteractionFlag.TextSelectableByMouse)
+
+    def test_atalho_global_so_aparece_quando_informado(self):
+        self.assertTrue(self.janela.rotulo_atalho.isHidden())
+        self.janela.mostrar_atalho_global("Ctrl+Alt+Shift+K")
+        self.assertFalse(self.janela.rotulo_atalho.isHidden())
+        self.assertIn("Ctrl+Alt+Shift+K", self.janela.rotulo_atalho.text())
+
+
 class EntreThreadsTests(JanelaCase):
     def test_sessao_iniciada_de_outra_thread_so_volta_com_o_aviso_na_tela(self):
         t, saida = em_thread(lambda: self.janela.sessao_iniciada("9.9.9.9:1"))

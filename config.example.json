@@ -4,6 +4,8 @@
     "porta": 5055,
     "raiz": null,
     "arquivo_log": "logs/agente.log",
+    "certificado": "certs/agente.crt",
+    "chave": "certs/agente.key",
     "auth_timeout": 10.0,
     "exec_timeout_padrao": 30.0,
     "exec_timeout_max": 300.0,
@@ -17,6 +19,8 @@
     "timeout_conexao": 5.0,
     "timeout_requisicao": 30.0,
     "timeout_exec": 330.0,
-    "pasta_downloads": "."
+    "pasta_downloads": ".",
+    "arquivo_agentes_conhecidos": "agentes_conhecidos.json",
+    "fingerprint_agente": null
   }
 }

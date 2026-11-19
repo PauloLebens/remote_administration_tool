@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import ssl
 import threading
 
 from agent.handlers.exec_handler import ExecHandler
@@ -44,13 +45,15 @@ class AgentServer:
         config: AgentConfig,
         *,
         secret: str,
+        contexto_tls: ssl.SSLContext,
         handlers: dict[str, Handler] | None = None,
         log: logging.Logger | None = None,
         observador: Observador | None = None,
         entrada: InputBackend | None = None,
     ) -> None:
         """`secret` é obrigatório: sem autenticação o agente não sobe, e ele não faz parte da
-        configuração (nunca fica em arquivo). `handlers` substitui o conjunto padrão de
+        configuração (nunca fica em arquivo). `contexto_tls` também é obrigatório: o canal é
+        sempre cifrado, não existe modo de texto claro (ver shared/tls.py). `handlers` substitui o conjunto padrão de
         ações. Com `config.porta == 0` o SO escolhe a porta (útil em testes).
 
         `observador` é o indicador visível. `entrada` é o backend de mouse e teclado, e só
@@ -60,6 +63,7 @@ class AgentServer:
         if not secret:  # sem autenticação o agente não sobe
             raise ValueError("o agente exige um segredo compartilhado")
         self._secret = secret
+        self._contexto_tls = contexto_tls
         self.config = config
         self.auth_timeout = config.auth_timeout
         self.host = config.host
@@ -99,7 +103,9 @@ class AgentServer:
                     continue
                 except OSError:
                     break
-                conn.settimeout(None)
+                conn = self._negociar_tls(conn, addr)
+                if conn is None:
+                    continue
                 self._session = Session(
                     conn, addr, self.handlers, self.log, self._secret, self.auth_timeout,
                     self.observador,
@@ -111,6 +117,23 @@ class AgentServer:
         finally:
             self._listener.close()
             self.log.info("agente parou de escutar")
+
+    def _negociar_tls(self, conn: socket.socket, addr: tuple) -> ssl.SSLSocket | None:
+        """Faz o handshake TLS com o cliente recém-aceito, dentro de um prazo.
+
+        O prazo (o mesmo do handshake de autenticação) impede que um cliente mudo, ou que
+        fale texto claro, segure o único lugar do agente. Devolve o socket cifrado, ou None
+        se o handshake falhou (a conexão é fechada e o agente volta a escutar).
+        """
+        conn.settimeout(self.auth_timeout)
+        try:
+            cifrado = self._contexto_tls.wrap_socket(conn, server_side=True)
+        except (ssl.SSLError, OSError) as exc:
+            self.log.warning("handshake TLS falhou com %s:%s: %s", addr[0], addr[1], exc)
+            conn.close()
+            return None
+        cifrado.settimeout(None)
+        return cifrado
 
     def stop(self) -> None:
         """Para o servidor e derruba a sessão ativa. Seguro para chamar de

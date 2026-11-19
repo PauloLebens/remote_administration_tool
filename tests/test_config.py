@@ -55,6 +55,13 @@ class ArquivoTests(Base):
         for cls in CLASSES:
             self.assertEqual(cls.carregar(str(EXEMPLO)), cls(), cls.__name__)
 
+    def test_exemplo_versionado_lista_todos_os_campos(self):
+        # Campo ausente cai no padrão e passaria no teste acima: aqui se exige que o exemplo
+        # MOSTRE cada campo, senão o usuário nunca descobre que ele existe.
+        exemplo = json.loads(EXEMPLO.read_text(encoding="utf-8"))
+        for cls in CLASSES:
+            self.assertEqual(set(exemplo[cls.SECAO]), {f.name for f in dataclasses.fields(cls)}, cls.__name__)
+
     def test_arquivo_pedido_e_inexistente_e_erro(self):
         with self.assertRaisesRegex(ConfigError, "não encontrado"):
             AgentConfig.carregar(str(self.dir / "nada.json"))

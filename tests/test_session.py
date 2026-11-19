@@ -13,6 +13,7 @@ from shared.config import AgentConfig
 from shared.protocol import Acao, make_command
 from shared.receiver import recv_msg
 from shared.sender import send_msg
+from tls_helper import CONTEXTO, socket_tls, verificador
 
 
 SECRET = "segredo-de-teste"
@@ -31,7 +32,7 @@ class ServerCase(unittest.TestCase):
     auth_timeout = 10.0
 
     def setUp(self):
-        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0, auth_timeout=self.auth_timeout), secret=SECRET)
+        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0, auth_timeout=self.auth_timeout), secret=SECRET, contexto_tls=CONTEXTO)
         self.server.open()
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -46,16 +47,16 @@ class ServerCase(unittest.TestCase):
         return conn.incoming.get(timeout=timeout)
 
     def conecta(self, **kw):
-        return Connection("127.0.0.1", self.port, secret=kw.pop("secret", SECRET), **kw)
+        return Connection("127.0.0.1", self.port, secret=kw.pop("secret", SECRET), verificador=verificador(), **kw)
 
 
 class AgentServerTests(ServerCase):
     def test_sobrevive_a_lixo_e_responde_depois(self):
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+        with socket_tls(self.port) as s:
             self.assertEqual(autentica(s)["status"], "ok")
             s.sendall(struct.pack("!I", 5) + b"lixo!")
             self.assertIsNone(recv_msg(s))  # só esta sessão caiu
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+        with socket_tls(self.port) as s:
             autentica(s)
             cmd = make_command(Acao.ECHO, {"t": "oi"})
             send_msg(s, cmd)
@@ -64,7 +65,7 @@ class AgentServerTests(ServerCase):
             self.assertEqual(resp["resultado"], {"eco": {"t": "oi"}})
 
     def test_acao_desconhecida_vira_erro_e_sessao_continua(self):
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+        with socket_tls(self.port) as s:
             autentica(s)
             send_msg(s, make_command("NAO_EXISTE"))
             self.assertEqual(recv_msg(s)["status"], "erro")
@@ -73,7 +74,7 @@ class AgentServerTests(ServerCase):
 
     def test_tratador_com_bug_nao_derruba_sessao(self):
         self.server.handlers["BOOM"] = lambda msg: 1 / 0
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+        with socket_tls(self.port) as s:
             autentica(s)
             send_msg(s, make_command("BOOM"))
             resp = recv_msg(s)
@@ -118,7 +119,7 @@ class ConnectionTests(ServerCase):
             s.bind(("127.0.0.1", 0))
             livre = s.getsockname()[1]
         with self.assertRaises(OSError):
-            Connection("127.0.0.1", livre, secret=SECRET).connect(timeout=1)
+            Connection("127.0.0.1", livre, secret=SECRET, verificador=verificador()).connect(timeout=1)
 
 
 class AuthTests(ServerCase):
@@ -133,7 +134,7 @@ class AuthTests(ServerCase):
             self.assertEqual(self.espera(conn)["status"], "ok")
 
     def test_comando_antes_de_autenticar_e_recusado(self):
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+        with socket_tls(self.port) as s:
             self.assertEqual(recv_msg(s)["acao"], Acao.DESAFIO)
             send_msg(s, make_command(Acao.ECHO, {"x": 1}))  # pula o AUTH
             resp = recv_msg(s)
@@ -143,25 +144,25 @@ class AuthTests(ServerCase):
 
     def test_prova_ausente_ou_de_tipo_errado(self):
         for args in ({}, {"prova": 123}, {"prova": None}, {"prova": "zzz"}):
-            with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+            with socket_tls(self.port) as s:
                 recv_msg(s)
                 send_msg(s, make_command(Acao.AUTH, args))
                 self.assertEqual(recv_msg(s)["status"], "erro")
                 self.assertIsNone(recv_msg(s))
 
     def test_prova_de_outra_conexao_nao_serve(self):  # replay
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s1:
+        with socket_tls(self.port) as s1:
             nonce1 = recv_msg(s1)["args"]["nonce"]
             send_msg(s1, make_command(Acao.AUTH, {"prova": compute_proof(SECRET, nonce1)}))
             self.assertEqual(recv_msg(s1)["status"], "ok")
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s2:
+        with socket_tls(self.port) as s2:
             nonce2 = recv_msg(s2)["args"]["nonce"]
             self.assertNotEqual(nonce1, nonce2)
             send_msg(s2, make_command(Acao.AUTH, {"prova": compute_proof(SECRET, nonce1)}))
             self.assertEqual(recv_msg(s2)["status"], "erro")
 
     def test_conexao_muda_e_derrubada_por_timeout(self):
-        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+        with socket_tls(self.port) as s:
             recv_msg(s)  # recebe o desafio e não responde
             self.assertIsNone(recv_msg(s))  # o agente desistiu (auth_timeout=0.4 s)
         with self.conecta() as conn:  # e o lugar ficou livre
@@ -169,7 +170,7 @@ class AuthTests(ServerCase):
 
     def test_agente_exige_segredo(self):
         with self.assertRaises(ValueError):
-            AgentServer(AgentConfig(host="127.0.0.1", porta=0), secret="")
+            AgentServer(AgentConfig(host="127.0.0.1", porta=0), secret="", contexto_tls=CONTEXTO)
 
 
 if __name__ == "__main__":

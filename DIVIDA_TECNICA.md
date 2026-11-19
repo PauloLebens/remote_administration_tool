@@ -159,6 +159,75 @@ traduzidos nos comandos MOUSE_MOVE, MOUSE_CLICK, MOUSE_SCROLL e KEY que o agente
 
 ---
 
+## DT-03 — Endurecimento do TLS
+
+**Registrado em:** 2026-11-19 · **Prioridade:** baixa/média · **Exigido pela especificação?** Não (o TLS em si é "de preferência"; já está feito)
+
+### Como é hoje
+
+TLS 1.3 obrigatório, certificado autoassinado gerado pelo agente (ECDSA P-256, 825 dias) e
+identidade do agente fixada pela impressão digital SHA-256, conferida pelo operador na primeira
+conexão (como o `known_hosts` do SSH). O segredo compartilhado autentica o controlador.
+
+### Limitações conhecidas (vale citar na análise do relatório)
+
+- **A segurança da primeira conexão depende do operador.** Se ele confirmar sem comparar a
+  impressão digital com a da janela do agente, um impostor presente nessa primeira vez é aceito
+  (o problema clássico do TOFU). Mitigação disponível: informar `--fingerprint` de antemão.
+- **Autenticação do controlador só por segredo.** Não há certificado de cliente (TLS mútuo).
+  Um segredo fraco continua sendo o ponto frágil: não há limite de tentativas por origem.
+- **Sem rotação nem revogação.** O certificado vale 825 dias e, ao expirar, a validade não é
+  checada (a identidade é a impressão digital). Trocar o certificado muda a identidade e obriga
+  cada operador a reconfirmar.
+- **A chave privada é um arquivo** (`certs/agente.key`, permissão 0600, fora do Git), sem
+  proteção por senha. Quem lê o arquivo se passa pelo agente.
+- **Um agente com vários endereços** (Wi-Fi, rede virtual) é uma entrada por `host:porta` no
+  arquivo de agentes conhecidos: o operador confirma uma vez por endereço usado.
+
+### Se for feito
+
+- [ ] Limite de tentativas de autenticação por origem, com espera crescente.
+- [ ] TLS mútuo (certificado de cliente) no lugar, ou além, do segredo.
+- [ ] Mostrar a impressão digital em forma de código curto ou QR para facilitar a conferência.
+
+### Arquivos envolvidos
+
+`src/shared/tls.py`, `src/controller/confianca.py`, `src/agent/server.py`, `src/shared/auth.py`
+
+---
+
+## DT-04 — Atalho global do kill switch sem teste em hardware real
+
+**Registrado em:** 2026-11-19 · **Prioridade:** média (verificar antes da demonstração) · **Exigido pela especificação?** Sim (kill switch local)
+
+### Situação
+
+A lógica do atalho (combinação exata, tap somente leitura, religamento do tap, ciclo de vida da
+thread) está coberta por testes com um Quartz **falso**. O que **não** foi exercitado é o event
+tap de verdade: ele exige a permissão **Monitoramento de Entrada** no macOS, e pedi-la exigiria
+abrir diálogos na tela de quem estava rodando os testes. No Windows e no Linux o atalho usa o
+`GlobalHotKeys` do pynput, **também não validado** nesses sistemas.
+
+### Para verificar (5 minutos, antes de demonstrar)
+
+- [ ] macOS: conceder Monitoramento de Entrada ao Terminal, abrir o agente e apertar
+      Control+Option+Shift+K com OUTRO aplicativo em foco: o agente deve encerrar.
+- [ ] macOS sem a permissão: a janela deve mostrar o aviso "atalho global indisponível" e o
+      botão, o atalho com foco e o Ctrl+C devem continuar funcionando.
+- [ ] Windows e Linux: o mesmo teste com Ctrl+Alt+Shift+K.
+
+### Por que o atalho do macOS não usa pynput
+
+O listener de teclado do pynput traduz cada tecla com a API TIS/TSM em outra thread, o que pode
+derrubar o processo no macOS 14 ou mais novo (`pynput/keyboard/_darwin.py`, `keycode_context`).
+O atalho do agente compara só o código físico da tecla K e os modificadores, sem tradução.
+
+### Arquivos envolvidos
+
+`src/agent/so/atalho.py`, `src/agent/agent.py`, `tests/test_atalho.py`
+
+---
+
 ## Modelo para novos itens
 
 ```

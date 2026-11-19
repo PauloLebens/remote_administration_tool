@@ -11,6 +11,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from agent.server import AgentServer
+from agent.so.atalho import DESCRICAO_ATALHO, criar_atalho
 from agent.so.entrada import EntradaIndisponivel
 from agent.so.entrada_pynput import PynputBackend, diagnostico
 from agent.ui.despachante import EntradaNaThreadPrincipal
@@ -18,6 +19,8 @@ from agent.ui.indicador import JanelaIndicador
 from shared.auth import get_secret
 from shared.config import AgentConfig, ConfigError
 from shared.log import setup_logging
+from shared.rede import enderecos_locais
+from shared.tls import TlsError, carregar_ou_gerar
 
 
 def mensagem_ao_escutar(exc: OSError, config: AgentConfig) -> str:
@@ -42,8 +45,11 @@ def main(config: AgentConfig) -> None:
 
     A janela do indicador visível roda na thread principal e o servidor numa thread à parte.
     Sem ambiente gráfico o agente se recusa a rodar: controle remoto sem o aviso na tela
-    violaria a Seção 3. Três saídas de emergência encerram sessão e programa: o botão da
-    janela, o atalho com a janela em foco e o Ctrl+C no terminal.
+    violaria a Seção 3. Quatro saídas de emergência encerram sessão e programa: o botão da
+    janela, o atalho com a janela em foco, o atalho global e o Ctrl+C no terminal.
+
+    Todo o tráfego é cifrado (TLS 1.3). O certificado é gerado na primeira execução e a
+    impressão digital dele aparece na janela, para o operador do controlador conferir.
     """
     log = setup_logging("agente", config.arquivo_log)
     secret = get_secret()  # pedido antes da janela: usa o terminal, sem eco
@@ -59,6 +65,18 @@ def main(config: AgentConfig) -> None:
         app.quit()
 
     janela = JanelaIndicador(config.porta, ao_encerrar)
+
+    enderecos = enderecos_locais()
+    try:
+        contexto_tls, fingerprint, gerado = carregar_ou_gerar(config.certificado, config.chave, enderecos)
+    except TlsError as exc:
+        sys.exit(f"certificado do agente: {exc}")
+    if gerado:
+        log.warning("certificado novo gerado em %s (a identidade deste agente é nova)", config.certificado)
+    log.info("conecte em: %s", ", ".join(f"{ip}:{config.porta}" for ip in enderecos) or f"porta {config.porta}")
+    log.info("impressão digital do agente: %s", fingerprint)
+    janela.mostrar_identidade(enderecos, config.porta, fingerprint)
+
     try:
         entrada = EntradaNaThreadPrincipal(PynputBackend(), janela.despachante)
     except EntradaIndisponivel as exc:
@@ -70,7 +88,9 @@ def main(config: AgentConfig) -> None:
         log.warning(aviso)
         janela.avisar(aviso)
 
-    server = AgentServer(config, secret=secret, log=log, observador=janela, entrada=entrada)
+    server = AgentServer(
+        config, secret=secret, contexto_tls=contexto_tls, log=log, observador=janela, entrada=entrada
+    )
     try:
         server.open()  # falha aqui (porta em uso) aparece na hora, e não numa thread
     except OSError as exc:
@@ -95,8 +115,17 @@ def main(config: AgentConfig) -> None:
     pulso.timeout.connect(lambda: None)
     pulso.start(200)
 
+    atalho = criar_atalho(janela.fechar_de_qualquer_thread)  # kill switch global (Seção 3)
+    motivo = atalho.iniciar()
+    if motivo:
+        log.warning(motivo)
+        janela.avisar(motivo)
+    else:
+        janela.mostrar_atalho_global(DESCRICAO_ATALHO)
+
     janela.show()
     app.exec()
+    atalho.parar()
     server.stop()
     thread.join(timeout=3)
     log.info("agente encerrado")

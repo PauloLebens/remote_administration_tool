@@ -16,6 +16,7 @@ from controller.controller import executar
 from shared.config import AgentConfig, ControllerConfig
 from controller.transfer import IntegrityError, TransferError, download, upload
 from shared.protocol import CHUNK_SIZE, Acao, make_command
+from tls_helper import CONTEXTO, verificador
 
 POSIX = os.name != "nt"
 SECRET = "segredo-de-teste"
@@ -277,11 +278,11 @@ class ViaRede(unittest.TestCase):
         self.local = self.dir / "controlador"
         self.agente.mkdir()
         self.local.mkdir()
-        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0, raiz=str(self.agente)), secret=SECRET)
+        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0, raiz=str(self.agente)), secret=SECRET, contexto_tls=CONTEXTO)
         self.server.open()
         self.t = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.t.start()
-        self.conn = Connection("127.0.0.1", self.server.port, secret=SECRET)
+        self.conn = Connection("127.0.0.1", self.server.port, secret=SECRET, verificador=verificador())
         self.conn.connect()
 
     def tearDown(self):
@@ -410,12 +411,12 @@ class ViaRede(unittest.TestCase):
 
 class RequestTests(unittest.TestCase):
     def setUp(self):
-        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0), secret=SECRET)
+        self.server = AgentServer(AgentConfig(host="127.0.0.1", porta=0), secret=SECRET, contexto_tls=CONTEXTO)
         self.server.handlers["LENTO"] = lambda m: time.sleep(m["args"]["s"]) or "pronto"
         self.server.open()
         self.t = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.t.start()
-        self.conn = Connection("127.0.0.1", self.server.port, secret=SECRET)
+        self.conn = Connection("127.0.0.1", self.server.port, secret=SECRET, verificador=verificador())
         self.conn.connect()
 
     def tearDown(self):
@@ -453,7 +454,7 @@ class RequestTests(unittest.TestCase):
 
     def test_timeout_padrao_vem_da_config(self):
         self.conn.close()  # o agente atende um controlador por vez: libera o lugar
-        with Connection("127.0.0.1", self.server.port, secret=SECRET,
+        with Connection("127.0.0.1", self.server.port, secret=SECRET, verificador=verificador(),
                         config=ControllerConfig(timeout_requisicao=0.2)) as c:
             c.connect()
             with self.assertRaises(TimeoutError):
