@@ -7,18 +7,23 @@ import socket
 import threading
 
 from agent.handlers.exec_handler import handle_exec
+from agent.handlers.files_handler import FileHandlers
 from agent.handlers.sysinfo_handler import handle_sysinfo
 from agent.session import Handler, Session
 from shared.protocol import DEFAULT_PORT, Acao
 
 
-def default_handlers() -> dict[str, Handler]:
-    """Tratadores disponíveis. Cada etapa nova registra suas ações aqui."""
-    return {
+def default_handlers(raiz: str | None = None) -> dict[str, Handler]:
+    """Tratadores disponíveis. Cada etapa nova registra suas ações aqui.
+
+    `raiz` restringe LS/GET/PUT a um diretório (opcional)."""
+    handlers: dict[str, Handler] = {
         Acao.ECHO: lambda msg: {"eco": msg.get("args", {})},
         Acao.EXEC: handle_exec,
         Acao.SYSINFO: handle_sysinfo,
     }
+    FileHandlers(raiz).registrar(handlers)
+    return handlers
 
 
 class AgentServer:
@@ -31,6 +36,7 @@ class AgentServer:
         handlers: dict[str, Handler] | None = None,
         log: logging.Logger | None = None,
         auth_timeout: float = 10.0,
+        raiz: str | None = None,
     ) -> None:
         if not secret:  # sem autenticação o agente não sobe
             raise ValueError("o agente exige um segredo compartilhado")
@@ -38,7 +44,7 @@ class AgentServer:
         self.auth_timeout = auth_timeout
         self.host = host
         self.port = port
-        self.handlers = handlers if handlers is not None else default_handlers()
+        self.handlers = handlers if handlers is not None else default_handlers(raiz)
         self.log = log or logging.getLogger("agente")
         self._listener: socket.socket | None = None
         self._session: Session | None = None

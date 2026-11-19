@@ -118,7 +118,11 @@ class Session:
         else:
             try:
                 resp = make_response(msg, handler(msg))
+            except (ValueError, OSError) as exc:  # recusa ou falha esperada: sem traceback
+                self.log.warning("%s recusado/falhou para %s: %s: %s",
+                                 msg["acao"], self.origem, type(exc).__name__, exc)
+                resp = make_response(msg, erro=f"{type(exc).__name__}: {exc}")
             except Exception as exc:  # um tratador com bug não derruba a sessão
-                self.log.exception("falha ao executar %s", msg["acao"])
+                self.log.exception("falha inesperada ao executar %s", msg["acao"])
                 resp = make_response(msg, erro=f"{type(exc).__name__}: {exc}")
         send_msg(self.conn, resp)

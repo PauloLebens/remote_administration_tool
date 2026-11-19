@@ -3,8 +3,11 @@
 Duas threads por conexão, ligadas ao resto do programa por filas:
   - leitura: recv_msg em laço -> `incoming`
   - escrita: `_outgoing` -> send_msg
-Quem usa (CLI hoje, interface depois) nunca bloqueia na rede: chama `send()`
-e consome `incoming`. Respostas são casadas com os comandos pelo `id`.
+Duas formas de usar, sempre casando resposta e comando pelo `id`:
+  - `send()` (assíncrono): enfileira e devolve o id; a resposta chega em `incoming`.
+  - `request()` (síncrono): envia e espera a resposta daquele id. A resposta vai
+    direto a quem esperou, sem passar por `incoming`, então uma transferência
+    de arquivo não rouba mensagens do consumidor da fila (a interface).
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from typing import Any
 
 from shared.auth import compute_proof
 from shared.protocol import (
-    DEFAULT_PORT, Acao, ProtocolError, Status, Tipo, make_command, make_event,
+    DEFAULT_PORT, Acao, ProtocolError, Status, Tipo, make_command, make_event, validate,
 )
 from shared.receiver import recv_msg
 from shared.sender import send_msg
@@ -50,6 +53,8 @@ class Connection:
         self._closed = threading.Event()
         self._notified = False
         self._notify_lock = threading.Lock()
+        self._pending: dict[str, queue.Queue[dict[str, Any] | None]] = {}
+        self._pending_lock = threading.Lock()
 
     @property
     def connected(self) -> bool:
@@ -104,6 +109,41 @@ class Connection:
         self._outgoing.put(cmd)
         return cmd["id"]
 
+    def request(
+        self, acao: str, args: dict[str, Any] | None = None, timeout: float = 30.0
+    ) -> dict[str, Any]:
+        """Envia um comando e espera a resposta com o mesmo id.
+
+        Levanta TimeoutError se o agente não responder a tempo e ConnectionError
+        se a conexão cair. Não chame da thread de leitura (ela é quem entrega).
+        """
+        cmd = make_command(acao, args)
+        espera: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=1)
+        with self._pending_lock:
+            if not self.connected:
+                raise ConnectionError("não conectado")
+            self._pending[cmd["id"]] = espera
+        self._outgoing.put(cmd)
+        try:
+            resp = espera.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError(f"sem resposta a {acao} em {timeout:g}s") from None
+        finally:
+            with self._pending_lock:
+                self._pending.pop(cmd["id"], None)
+        if resp is None:
+            raise ConnectionError("conexão encerrada antes da resposta")
+        return resp
+
+    def _fail_pending(self) -> None:
+        """Acorda quem espera resposta quando a conexão acaba."""
+        with self._pending_lock:
+            for espera in self._pending.values():
+                try:
+                    espera.put_nowait(None)
+                except queue.Full:
+                    pass
+
     def close(self) -> None:
         if self._closed.is_set():
             self._close_socket()  # a queda pode ter vindo do agente: garante o fechamento
@@ -111,6 +151,7 @@ class Connection:
         self._closed.set()
         self._outgoing.put(None)  # acorda a thread de escrita
         self._close_socket()
+        self._fail_pending()
         for t in self._threads:
             if t is not threading.current_thread():
                 t.join(timeout=2)
@@ -140,7 +181,14 @@ class Connection:
                 msg = recv_msg(self._sock)
                 if msg is None:
                     break
-                self.log.info("recebido %s (id=%s)", msg.get("acao"), msg.get("id"))
+                validate(msg)
+                self.log.info("recebido %s (id=%s)", msg["acao"], msg["id"])
+                if msg["tipo"] == Tipo.RESPOSTA:
+                    with self._pending_lock:
+                        espera = self._pending.get(msg["id"])
+                    if espera is not None:  # alguém está esperando por esta resposta
+                        espera.put(msg)
+                        continue
                 self.incoming.put(msg)
         except (ProtocolError, ConnectionError, OSError) as exc:
             reason = "encerrada localmente" if self._closed.is_set() else f"erro: {exc}"
@@ -148,6 +196,7 @@ class Connection:
             self._closed.set()
             self._outgoing.put(None)
             self._close_socket()
+            self._fail_pending()
             self._notify_disconnect(reason)
 
     def _write_loop(self) -> None:
