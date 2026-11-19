@@ -208,7 +208,9 @@ class Connection:
         try:
             while True:
                 msg = recv_msg(self._sock)
-                if msg is None:
+                if msg is None:  # fim limpo: foi o agente, ou fomos nós em close()?
+                    if self._closed.is_set():
+                        reason = "encerrada localmente"
                     break
                 validate(msg)
                 self.log.info("recebido %s (id=%s)", msg["acao"], msg["id"])

@@ -105,7 +105,9 @@ class ConnectionTests(ServerCase):
         conn.connect()
         conn.close()
         conn.close()
-        self.assertEqual(self.espera(conn)["acao"], EVENTO_DESCONECTADO)
+        evento = self.espera(conn)
+        self.assertEqual(evento["acao"], EVENTO_DESCONECTADO)
+        self.assertEqual(evento["args"]["motivo"], "encerrada localmente")  # fomos nós, não o agente
         with self.assertRaises(queue.Empty):
             conn.incoming.get(timeout=0.3)
         with self.assertRaises(ConnectionError):
